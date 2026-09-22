@@ -1,0 +1,6 @@
+{
+  "name": "CoachTactics",
+  "description": "AI-powered animated soccer training plan generator for coaches with voice notes, dynamic drill animations, instant modifications, and role management.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
