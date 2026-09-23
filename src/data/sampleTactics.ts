@@ -1,47 +1,7 @@
 import { SoccerDrill, UserProfile } from '../types.ts';
 
-export const DEFAULT_USERS: UserProfile[] = [
-  {
-    id: 'user_superadmin',
-    username: 'heavylaws',
-    name: 'HeavyLaws (Super Admin)',
-    email: '',
-    role: 'SUPER_ADMIN',
-    team: 'Master Tactical HQ',
-    avatarColor: '#00E5FF',
-    needsEmailSetup: true,
-  },
-  {
-    id: 'user_client',
-    username: 'c00ldude',
-    name: 'Cool Dude (Client)',
-    email: '',
-    role: 'CLIENT',
-    team: 'Client Academy',
-    avatarColor: '#FFD600',
-    needsEmailSetup: true,
-  },
-  {
-    id: 'coach_head',
-    username: 'pepguardiola',
-    name: 'Coach Pep Guardiola',
-    email: 'pep.guardiola@tactics.club',
-    role: 'HEAD_COACH',
-    team: 'Elite FC First Squad',
-    avatarColor: '#00E676',
-    needsEmailSetup: false,
-  },
-  {
-    id: 'player_striker',
-    username: 'rashford9',
-    name: 'Marcus Rashford (#9)',
-    email: 'marcus.r@tactics.club',
-    role: 'PLAYER',
-    team: 'Elite FC First Squad',
-    avatarColor: '#FF6E40',
-    needsEmailSetup: false,
-  },
-];
+// User accounts live on the server only. No demo accounts or credentials ship in the client.
+export const DEFAULT_USERS: UserProfile[] = [];
 
 export const DEFAULT_TACTICAL_DRILLS: SoccerDrill[] = [
   {

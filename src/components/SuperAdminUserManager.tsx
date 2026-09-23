@@ -46,8 +46,21 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
   const [role, setRole] = useState<UserRole>('CLIENT');
   const [team, setTeam] = useState('Senior Academy');
   const [error, setError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   if (!isOpen) return null;
+
+  const MIN_PASSWORD = 10;
+
+  // 16 chars from an unambiguous alphabet, generated with the browser CSPRNG.
+  const generatePassword = () => {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_!@#';
+    const bytes = new Uint32Array(16);
+    crypto.getRandomValues(bytes);
+    const generated = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+    setPassword(generated);
+    setShowPassword(true);
+  };
 
   const resetForm = () => {
     setEditingUserId(null);
@@ -56,6 +69,7 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
     setName('');
     setEmail('');
     setPassword('');
+    setShowPassword(false);
     setRole('CLIENT');
     setTeam('Senior Academy');
     setError(null);
@@ -88,6 +102,16 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
       return;
     }
 
+    const cleanPassword = password.trim();
+    if ((isCreatingNew || cleanPassword.length > 0) && cleanPassword.length < MIN_PASSWORD) {
+      setError(`Password must be at least ${MIN_PASSWORD} characters. Use "Generate" for a strong one.`);
+      return;
+    }
+    if (editingUserId === currentUser.id && role !== currentUser.role) {
+      setError('You cannot change your own role.');
+      return;
+    }
+
     if (isCreatingNew) {
       if (users.some((u) => u.username.toLowerCase() === cleanUser)) {
         setError('A user with this username already exists.');
@@ -97,7 +121,7 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
         username: cleanUser,
         name: name.trim() || cleanUser,
         email: email.trim(),
-        password: password.trim() || '123456',
+        password: cleanPassword,
         role,
         team: team.trim() || 'Tactics Club',
         avatarColor: role === 'SUPER_ADMIN' ? '#00E5FF' : role === 'CLIENT' ? '#FFD600' : '#00E676',
@@ -208,15 +232,32 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
                   <label className="block text-[11px] font-semibold text-gray-300 mb-1">
                     {isCreatingNew ? 'Initial Password' : 'Reset Password (optional)'}
                   </label>
-                  <input
-                    id="admin-form-password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={isCreatingNew ? 'Initial password (min 6 chars)' : 'Leave empty to keep existing'}
-                    required={isCreatingNew}
-                    className="w-full bg-[#162A42] border border-[#243D5B] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00E5FF]"
-                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      id="admin-form-password"
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={isCreatingNew ? `At least ${MIN_PASSWORD} characters` : 'Leave empty to keep existing'}
+                      required={isCreatingNew}
+                      minLength={isCreatingNew ? MIN_PASSWORD : undefined}
+                      autoComplete="new-password"
+                      className="w-full min-w-0 bg-[#162A42] border border-[#243D5B] rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-[#00E5FF]"
+                    />
+                    <button
+                      type="button"
+                      id="admin-form-generate-password"
+                      onClick={generatePassword}
+                      className="px-2 py-1.5 text-[11px] font-semibold rounded-lg bg-[#1E3652] hover:bg-[#264569] text-gray-200 flex-shrink-0"
+                    >
+                      Generate
+                    </button>
+                  </div>
+                  {showPassword && password && (
+                    <p className="mt-1 text-[10px] text-[#FFD600]">
+                      Copy this password now and share it privately. It won't be shown again.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -333,7 +374,7 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
               <tbody className="divide-y divide-[#182C44]">
                 {users.map((u) => {
                   const isCurrent = u.id === currentUser.id;
-                  const isSuperAdminAccount = u.username.toLowerCase() === 'heavylaws';
+                  const isSuperAdminAccount = u.role === 'SUPER_ADMIN' && users.filter((x) => x.role === 'SUPER_ADMIN').length <= 1;
                   return (
                     <tr key={u.id} className="hover:bg-[#14263A] transition-colors">
                       <td className="p-3">

@@ -6,7 +6,7 @@ interface RoleManagementDialogProps {
   isOpen: boolean;
   currentUser: UserProfile;
   availableUsers: UserProfile[];
-  onSelectUser: (user: UserProfile) => void;
+  onSelectUser?: (user: UserProfile) => void;
   onClose: () => void;
 }
 
@@ -70,9 +70,9 @@ export const RoleManagementDialog: React.FC<RoleManagementDialogProps> = ({
       >
         <div className="flex items-center justify-between border-b border-[#1A2C40] pb-3">
           <div>
-            <h3 className="text-base font-bold text-white">Select Squad Persona & Role</h3>
+            <h3 className="text-base font-bold text-white">Your account</h3>
             <p className="text-xs text-gray-400">
-              Switch role to test coach-to-player tactical presentation workflows
+              Your role and what it allows. Roles are assigned by a super administrator.
             </p>
           </div>
           <button
@@ -94,11 +94,7 @@ export const RoleManagementDialog: React.FC<RoleManagementDialogProps> = ({
               <div
                 key={user.id}
                 id={`role-card-${user.id}`}
-                onClick={() => {
-                  onSelectUser(user);
-                  onClose();
-                }}
-                className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                className={`p-3 rounded-xl border transition-all flex items-start justify-between gap-3 ${
                   isSelected
                     ? 'bg-[#15273C] border-[#00E5FF] shadow-[0_0_12px_rgba(0,229,255,0.2)]'
                     : 'bg-[#101D2D] border-[#1C2F45] hover:border-[#2C4666]'

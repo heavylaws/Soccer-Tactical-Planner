@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types.ts';
-import { Lock, User, ArrowRight, ShieldCheck, Sparkles, AlertCircle, Loader2 } from 'lucide-react';
+import { Lock, User, ArrowRight, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -59,12 +59,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
-  const handleQuickFill = (user: string, pass: string) => {
-    setUsername(user);
-    setPassword(pass);
-    setError(null);
-  };
-
   return (
     <div
       id="login-modal-backdrop"
@@ -110,7 +104,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="e.g. heavylaws or c00ldude"
+                placeholder="Your username"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
                 disabled={loading}
                 required
                 className="w-full bg-[#132338] border border-[#223953] focus:border-[#00E5FF] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none transition-colors disabled:opacity-50"
@@ -130,6 +127,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
+                autoComplete="current-password"
                 disabled={loading}
                 required
                 className="w-full bg-[#132338] border border-[#223953] focus:border-[#00E5FF] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none transition-colors disabled:opacity-50"
@@ -157,40 +155,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </button>
         </form>
 
-        {/* Demo Fast Preset Credentials for Testing */}
-        <div className="pt-3 border-t border-[#1C324D] flex flex-col gap-2">
-          <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-[#00E5FF]" />
-            Authorized Quick Access Accounts:
-          </span>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              id="quick-fill-superadmin"
-              onClick={() => handleQuickFill('heavylaws', 'A!t3r3g0')}
-              className="p-2.5 rounded-xl bg-[#122236] hover:bg-[#182C44] border border-[#1E3652] hover:border-[#00E5FF]/40 text-left transition-all group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white group-hover:text-[#00E5FF]">heavylaws</span>
-                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#00E5FF]/20 text-[#00E5FF]">Super Admin</span>
-              </div>
-              <span className="text-[10px] text-gray-400 font-mono mt-0.5 block">Pass: A!t3r3g0</span>
-            </button>
-
-            <button
-              type="button"
-              id="quick-fill-client"
-              onClick={() => handleQuickFill('c00ldude', '123456')}
-              className="p-2.5 rounded-xl bg-[#122236] hover:bg-[#182C44] border border-[#1E3652] hover:border-[#FFD600]/40 text-left transition-all group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white group-hover:text-[#FFD600]">c00ldude</span>
-                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#FFD600]/20 text-[#FFD600]">Client</span>
-              </div>
-              <span className="text-[10px] text-gray-400 font-mono mt-0.5 block">Pass: 123456</span>
-            </button>
-          </div>
-        </div>
+        <p className="text-[11px] text-gray-500 text-center">
+          No account yet? Ask your club administrator to create one for you.
+        </p>
       </div>
     </div>
   );
