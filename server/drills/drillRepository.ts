@@ -4,7 +4,10 @@
 // durable SQL/Postgres/CloudSQL or Firestore database can be swapped in without modifying
 // any drill service or API route contracts.
 
+import path from 'path';
 import { StoredDrill } from './drillDomain.ts';
+import { config } from '../config.ts';
+import { readJsonFile, DebouncedJsonWriter } from '../storage/jsonFileStore.ts';
 
 export interface IDrillRepository {
   findById(id: string): Promise<StoredDrill | null>;
@@ -18,7 +21,7 @@ export interface IDrillRepository {
 }
 
 export class InMemoryDrillRepository implements IDrillRepository {
-  private drills = new Map<string, StoredDrill>();
+  protected drills = new Map<string, StoredDrill>();
 
   constructor() {
     this.seedDefaultSystemDrills();
@@ -341,5 +344,57 @@ export class InMemoryDrillRepository implements IDrillRepository {
   }
 }
 
-// Default singleton repository instance
-export const defaultDrillRepository: IDrillRepository = new InMemoryDrillRepository();
+/**
+ * JSON-file-backed repository. System drills are always re-seeded from code (so code updates
+ * reach them); only user drills are persisted to disk.
+ */
+export class FileDrillRepository extends InMemoryDrillRepository {
+  private readonly writer: DebouncedJsonWriter;
+
+  constructor(private readonly file: string) {
+    super();
+    const data = readJsonFile<{ drills?: StoredDrill[] }>(file, {});
+    for (const d of data.drills ?? []) {
+      if (d && typeof d.id === 'string' && typeof d.createdBy === 'string' && Array.isArray(d.phases) && !d.isSystem) {
+        this.drills.set(d.id, d);
+      }
+    }
+    this.writer = new DebouncedJsonWriter(file, () => ({
+      version: 1,
+      drills: Array.from(this.drills.values()).filter((d) => !d.isSystem),
+    }));
+  }
+
+  override async create(drill: StoredDrill): Promise<StoredDrill> {
+    const result = await super.create(drill);
+    this.writer.schedule();
+    return result;
+  }
+
+  override async update(id: string, drill: StoredDrill): Promise<StoredDrill> {
+    const result = await super.update(id, drill);
+    this.writer.schedule();
+    return result;
+  }
+
+  override async delete(id: string): Promise<boolean> {
+    const result = await super.delete(id);
+    this.writer.schedule();
+    return result;
+  }
+
+  /** Force pending writes to disk (used by tests and shutdown hooks). */
+  flush(): void {
+    this.writer.flush();
+  }
+}
+
+function createDefaultRepository(): IDrillRepository {
+  if (config.storageDriver === 'file') {
+    return new FileDrillRepository(path.join(config.dataDir, 'drills.json'));
+  }
+  return new InMemoryDrillRepository();
+}
+
+// Default singleton repository instance (file-backed unless STORAGE_DRIVER=memory)
+export const defaultDrillRepository: IDrillRepository = createDefaultRepository();

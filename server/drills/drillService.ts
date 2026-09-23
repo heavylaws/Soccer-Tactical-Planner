@@ -3,6 +3,10 @@ import { IDrillRepository, defaultDrillRepository } from './drillRepository.ts';
 import { StoredDrill } from './drillDomain.ts';
 import { SafeUser } from '../auth/userService.ts';
 import { validateTacticalDrill, TacticalValidationError } from '../tactical/tacticalValidator.ts';
+import { config } from '../config.ts';
+
+/** Maximum legacy drills accepted in one migration request. */
+export const MAX_MIGRATION_BATCH = 100;
 
 export class NotFoundError extends Error {
   constructor(message = 'Resource not found') {
@@ -27,8 +31,36 @@ export class ValidationError extends Error {
   }
 }
 
+export interface DrillServiceOptions {
+  maxDrillsPerUser?: number;
+}
+
 export class DrillService {
-  constructor(private repo: IDrillRepository = defaultDrillRepository) {}
+  private readonly maxDrillsPerUser: number;
+
+  constructor(
+    private repo: IDrillRepository = defaultDrillRepository,
+    options: DrillServiceOptions = {}
+  ) {
+    this.maxDrillsPerUser = options.maxDrillsPerUser ?? config.maxDrillsPerUser;
+  }
+
+  /** PLAYER accounts are read-only. Enforced here so no route can forget it. */
+  private assertCanWrite(user: SafeUser): void {
+    if (user.role === 'PLAYER') {
+      throw new ForbiddenError('Players have read-only access to drills.');
+    }
+  }
+
+  private async assertUnderQuota(user: SafeUser, adding = 1): Promise<void> {
+    if (user.role === 'SUPER_ADMIN') return;
+    const owned = await this.repo.findByCreator(user.id);
+    if (owned.length + adding > this.maxDrillsPerUser) {
+      throw new ForbiddenError(
+        `Playbook limit reached (${this.maxDrillsPerUser} drills). Delete drills you no longer need, then try again.`
+      );
+    }
+  }
 
   /**
    * Retrieves all drills accessible by the authenticated user based on role and ownership.
@@ -98,6 +130,8 @@ export class DrillService {
    * Client-supplied ownership fields are strictly ignored/rejected.
    */
   async createDrill(rawPayload: unknown, user: SafeUser): Promise<StoredDrill> {
+    this.assertCanWrite(user);
+    await this.assertUnderQuota(user);
     if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
       throw new ValidationError('Payload must be a valid tactical drill object');
     }
@@ -149,6 +183,7 @@ export class DrillService {
    * Preserves immutable fields (createdBy, createdAt, isSystem).
    */
   async updateDrill(id: string, updates: unknown, user: SafeUser): Promise<StoredDrill> {
+    this.assertCanWrite(user);
     const existing = await this.repo.findById(id);
     if (!existing) {
       throw new NotFoundError('Drill not found');
@@ -224,6 +259,7 @@ export class DrillService {
    * Enforces owner authorization and protects system drills.
    */
   async deleteDrill(id: string, user: SafeUser): Promise<boolean> {
+    this.assertCanWrite(user);
     const existing = await this.repo.findById(id);
     if (!existing) {
       throw new NotFoundError('Drill not found');
@@ -248,9 +284,14 @@ export class DrillService {
     rawDrills: unknown[],
     user: SafeUser
   ): Promise<{ imported: number; failed: number; drills: StoredDrill[] }> {
+    this.assertCanWrite(user);
     if (!Array.isArray(rawDrills)) {
       throw new ValidationError('Drills to migrate must be an array');
     }
+    if (rawDrills.length > MAX_MIGRATION_BATCH) {
+      throw new ValidationError(`At most ${MAX_MIGRATION_BATCH} drills can be migrated per request`);
+    }
+    await this.assertUnderQuota(user, rawDrills.length);
 
     let imported = 0;
     let failed = 0;

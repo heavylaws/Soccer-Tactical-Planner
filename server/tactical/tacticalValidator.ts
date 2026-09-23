@@ -29,6 +29,53 @@ export interface TacticalValidationResult {
 }
 
 /**
+ * Hard ceilings protecting memory, storage and the canvas renderer.
+ * Generous for real drills (11v11 + staff, a dozen phases) but stop payload abuse.
+ */
+export const TACTICAL_LIMITS = {
+  maxPhases: 12,
+  maxPlayersPerPhase: 30,
+  maxEquipmentPerPhase: 40,
+  maxCoachingCues: 20,
+  maxCueLength: 300,
+  maxTitle: 140,
+  maxCategory: 80,
+  maxFocusArea: 140,
+  maxDescription: 3000,
+  maxPhaseTitle: 140,
+  maxInstruction: 800,
+  maxLabel: 40,
+  maxId: 80,
+  maxTacticalRole: 60,
+} as const;
+
+function checkMaxLength(
+  value: string,
+  max: number,
+  path: string,
+  errors: TacticalValidationError[]
+): boolean {
+  if (value.length > max) {
+    errors.push({
+      path,
+      message: `Value is ${value.length} characters; maximum is ${max}.`,
+      code: 'VALUE_TOO_LONG',
+      received: value.length,
+    });
+    return false;
+  }
+  return true;
+}
+
+/** Keeps error payloads small: never echo whole objects/arrays or long strings back to the client. */
+function summarizeReceived(val: unknown): unknown {
+  if (typeof val === 'string') return val.length > 80 ? `${val.slice(0, 80)}…` : val;
+  if (Array.isArray(val)) return `[array(${val.length})]`;
+  if (val !== null && typeof val === 'object') return '[object]';
+  return val;
+}
+
+/**
  * Validates whether a value is a non-null, non-array object.
  */
 function isPlainObject(val: unknown): val is Record<string, unknown> {
@@ -220,6 +267,7 @@ export function validatePlayer(
     return null;
   }
   const id = raw.id.trim();
+  if (!checkMaxLength(id, TACTICAL_LIMITS.maxId, `${path}.id`, errors)) return null;
 
   // Uniqueness check within the phase
   if (seenPlayerIds.has(id)) {
@@ -266,6 +314,7 @@ export function validatePlayer(
   let label = '';
   if (typeof raw.label === 'string' && raw.label.trim().length > 0) {
     label = raw.label.trim();
+    if (!checkMaxLength(label, TACTICAL_LIMITS.maxLabel, `${path}.label`, errors)) label = '';
   } else {
     errors.push({
       path: `${path}.label`,
@@ -277,8 +326,14 @@ export function validatePlayer(
 
   // 6. Optional flags
   const hasBall = Boolean(raw.hasBall);
-  const tacticalRole = typeof raw.tacticalRole === 'string' && raw.tacticalRole.trim() ? raw.tacticalRole.trim() : undefined;
-  const tacticalDuty = typeof raw.tacticalDuty === 'string' && raw.tacticalDuty.trim() ? raw.tacticalDuty.trim() : undefined;
+  const tacticalRole =
+    typeof raw.tacticalRole === 'string' && raw.tacticalRole.trim()
+      ? raw.tacticalRole.trim().slice(0, TACTICAL_LIMITS.maxTacticalRole)
+      : undefined;
+  const tacticalDuty =
+    typeof raw.tacticalDuty === 'string' && raw.tacticalDuty.trim()
+      ? raw.tacticalDuty.trim().slice(0, TACTICAL_LIMITS.maxTacticalRole)
+      : undefined;
 
   if (number === null || role === null || x === null || y === null || targetX === null || targetY === null || !label) {
     return null;
@@ -365,6 +420,7 @@ export function validateEquipment(
     return null;
   }
   const id = raw.id.trim();
+  if (!checkMaxLength(id, TACTICAL_LIMITS.maxId, `${path}.id`, errors)) return null;
 
   if (seenEquipmentIds.has(id)) {
     errors.push({
@@ -443,6 +499,7 @@ export function validatePhase(
   let title = '';
   if (typeof raw.title === 'string' && raw.title.trim().length > 0) {
     title = raw.title.trim();
+    if (!checkMaxLength(title, TACTICAL_LIMITS.maxPhaseTitle, `${path}.title`, errors)) title = '';
   } else {
     errors.push({
       path: `${path}.title`,
@@ -456,6 +513,7 @@ export function validatePhase(
   let instruction = '';
   if (typeof raw.instruction === 'string' && raw.instruction.trim().length > 0) {
     instruction = raw.instruction.trim();
+    if (!checkMaxLength(instruction, TACTICAL_LIMITS.maxInstruction, `${path}.instruction`, errors)) instruction = '';
   } else {
     errors.push({
       path: `${path}.instruction`,
@@ -511,6 +569,16 @@ export function validatePhase(
     });
   }
 
+  if (raw.players.length > TACTICAL_LIMITS.maxPlayersPerPhase) {
+    errors.push({
+      path: `${path}.players`,
+      message: `Phase has ${raw.players.length} players; maximum is ${TACTICAL_LIMITS.maxPlayersPerPhase}.`,
+      code: 'TOO_MANY_PLAYERS',
+      received: raw.players.length,
+    });
+    return null;
+  }
+
   const seenPlayerIds = new Set<string>();
   const players: TacticalPlayer[] = [];
   raw.players.forEach((p, idx) => {
@@ -530,6 +598,13 @@ export function validatePhase(
         message: `Phase equipment, if provided, must be an array.`,
         code: 'INVALID_EQUIPMENT_ARRAY',
         received: raw.equipment,
+      });
+    } else if (raw.equipment.length > TACTICAL_LIMITS.maxEquipmentPerPhase) {
+      errors.push({
+        path: `${path}.equipment`,
+        message: `Phase has ${raw.equipment.length} equipment items; maximum is ${TACTICAL_LIMITS.maxEquipmentPerPhase}.`,
+        code: 'TOO_MANY_EQUIPMENT',
+        received: raw.equipment.length,
       });
     } else {
       const seenEquipmentIds = new Set<string>();
@@ -573,7 +648,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
           path: '',
           message: 'Tactical drill must be an object.',
           code: 'INVALID_ROOT_TYPE',
-          received: raw,
+          received: summarizeReceived(raw),
         },
       ],
     };
@@ -581,7 +656,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
 
   // 1. Drill ID (normalize if missing)
   let id = `drill_${Date.now()}`;
-  if (typeof raw.id === 'string' && raw.id.trim().length > 0) {
+  if (typeof raw.id === 'string' && raw.id.trim().length > 0 && raw.id.trim().length <= TACTICAL_LIMITS.maxId) {
     id = raw.id.trim();
   }
 
@@ -589,6 +664,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
   let title = '';
   if (typeof raw.title === 'string' && raw.title.trim().length > 0) {
     title = raw.title.trim();
+    checkMaxLength(title, TACTICAL_LIMITS.maxTitle, 'title', errors);
   } else {
     errors.push({
       path: 'title',
@@ -602,6 +678,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
   let category = '';
   if (typeof raw.category === 'string' && raw.category.trim().length > 0) {
     category = raw.category.trim();
+    checkMaxLength(category, TACTICAL_LIMITS.maxCategory, 'category', errors);
   } else {
     errors.push({
       path: 'category',
@@ -615,6 +692,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
   let focusArea = '';
   if (typeof raw.focusArea === 'string' && raw.focusArea.trim().length > 0) {
     focusArea = raw.focusArea.trim();
+    checkMaxLength(focusArea, TACTICAL_LIMITS.maxFocusArea, 'focusArea', errors);
   } else {
     errors.push({
       path: 'focusArea',
@@ -660,6 +738,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
   let description = '';
   if (typeof raw.description === 'string' && raw.description.trim().length > 0) {
     description = raw.description.trim();
+    checkMaxLength(description, TACTICAL_LIMITS.maxDescription, 'description', errors);
   } else {
     errors.push({
       path: 'description',
@@ -679,6 +758,16 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
     coachingCues = [raw.coachingCues.trim()];
   }
 
+  if (coachingCues.length > TACTICAL_LIMITS.maxCoachingCues) {
+    errors.push({
+      path: 'coachingCues',
+      message: `Drill has ${coachingCues.length} coaching cues; maximum is ${TACTICAL_LIMITS.maxCoachingCues}.`,
+      code: 'TOO_MANY_CUES',
+      received: coachingCues.length,
+    });
+  }
+  coachingCues.forEach((cue, idx) => checkMaxLength(cue, TACTICAL_LIMITS.maxCueLength, `coachingCues[${idx}]`, errors));
+
   if (coachingCues.length === 0) {
     coachingCues = ['Emphasize crisp passing and rapid spatial transitions'];
   }
@@ -693,7 +782,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
     });
     return {
       success: false,
-      errors,
+      errors: errors.map((e) => ({ ...e, received: summarizeReceived(e.received) })),
     };
   }
 
@@ -704,6 +793,16 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
       code: 'EMPTY_PHASES_ARRAY',
       received: [],
     });
+  }
+
+  if (raw.phases.length > TACTICAL_LIMITS.maxPhases) {
+    errors.push({
+      path: 'phases',
+      message: `Drill has ${raw.phases.length} phases; maximum is ${TACTICAL_LIMITS.maxPhases}.`,
+      code: 'TOO_MANY_PHASES',
+      received: raw.phases.length,
+    });
+    return { success: false, errors: errors.map((e) => ({ ...e, received: summarizeReceived(e.received) })) };
   }
 
   const seenSteps = new Set<number>();
@@ -719,7 +818,7 @@ export function validateTacticalDrill(raw: unknown): TacticalValidationResult {
   if (errors.length > 0) {
     return {
       success: false,
-      errors,
+      errors: errors.map((e) => ({ ...e, received: summarizeReceived(e.received) })),
     };
   }
 
