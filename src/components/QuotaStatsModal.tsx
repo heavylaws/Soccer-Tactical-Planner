@@ -50,7 +50,7 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
     setIsClearing(true);
     clearClientCache();
     try {
-      await fetch('/api/clear-cache', { method: 'POST' });
+      await fetch('/api/clear-cache', { method: 'POST', credentials: 'include' });
     } catch {
       // ignore
     }

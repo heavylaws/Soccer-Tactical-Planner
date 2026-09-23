@@ -45,6 +45,7 @@ import { FirstLoginEmailModal } from './components/FirstLoginEmailModal.tsx';
 import { SuperAdminUserManager } from './components/SuperAdminUserManager.tsx';
 import { ClientEmptyDashboard } from './components/ClientEmptyDashboard.tsx';
 import { QuotaStatsModal } from './components/QuotaStatsModal.tsx';
+import { CoachPlanEditorTutorialModal } from './components/CoachPlanEditorTutorialModal.tsx';
 import {
   getClientCachedDrill,
   saveDrillToClientCache,
@@ -54,42 +55,147 @@ import {
 import { LogOut, UserCog, Zap, ShieldCheck } from 'lucide-react';
 
 export default function App() {
-  // Registered users database in state (seeded from DEFAULT_USERS)
-  const [users, setUsers] = useState<UserProfile[]>(() => {
-    try {
-      const saved = localStorage.getItem('coachtactics_users');
-      return saved ? JSON.parse(saved) : DEFAULT_USERS;
-    } catch {
-      return DEFAULT_USERS;
-    }
-  });
+  // Registered users directory (synced from server for SUPER_ADMIN)
+  const [users, setUsers] = useState<UserProfile[]>(DEFAULT_USERS);
 
-  // Current session user (null initially -> forces visitor credentials login)
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    try {
-      const savedUser = localStorage.getItem('coachtactics_current_user');
-      return savedUser ? JSON.parse(savedUser) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Authenticated server identity
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
 
-  // Drills state
-  const [drills, setDrills] = useState<SoccerDrill[]>(() => {
+  // Verify server-side session on mount
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then(async (res) => {
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.user) {
+            setCurrentUser(data.user);
+          }
+        }
+      })
+      .catch(() => {
+        // Unauthenticated visitor
+      })
+      .finally(() => {
+        if (isMounted) setIsAuthChecking(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Sync users list from server when SUPER_ADMIN is authenticated
+  const fetchServerUsers = useCallback(async () => {
     try {
-      const saved = localStorage.getItem('coachtactics_drills');
-      return saved ? JSON.parse(saved) : DEFAULT_TACTICAL_DRILLS;
-    } catch {
-      return DEFAULT_TACTICAL_DRILLS;
+      const res = await fetch('/api/users', {
+        credentials: 'include',
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.users) {
+          setUsers(data.users);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to sync users directory:', err);
     }
-  });
+  }, [authToken]);
+
+  useEffect(() => {
+    if (currentUser?.role === 'SUPER_ADMIN') {
+      fetchServerUsers();
+    }
+  }, [currentUser?.role, fetchServerUsers]);
+
+  // Drills state initialized with default system drills
+  const [drills, setDrills] = useState<SoccerDrill[]>(DEFAULT_TACTICAL_DRILLS);
   const [activeDrill, setActiveDrill] = useState<SoccerDrill>(DEFAULT_TACTICAL_DRILLS[0]);
+  const [isSavingDrill, setIsSavingDrill] = useState<boolean>(false);
 
   // Auth Dialog States
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
   const [isFirstLoginEmailModalOpen, setIsFirstLoginEmailModalOpen] = useState(false);
   const [isSuperAdminManagerOpen, setIsSuperAdminManagerOpen] = useState(false);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
+
+  // Server-Authoritative Drill Repository Sync
+  const fetchServerDrills = useCallback(async () => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch('/api/drills', {
+        headers: {
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.drills)) {
+          setDrills(data.drills);
+          if (data.drills.length > 0) {
+            setActiveDrill((prev) => {
+              const stillExists = data.drills.find((d: SoccerDrill) => d.id === prev?.id);
+              return stillExists || data.drills[0];
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load server drills:', err);
+    }
+  }, [currentUser, authToken]);
+
+  // One-time safe migration from browser localStorage to server-authoritative repository
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const checkAndMigrateLocalStorage = async () => {
+      try {
+        const rawLocal = localStorage.getItem('coachtactics_drills');
+        if (!rawLocal) {
+          fetchServerDrills();
+          return;
+        }
+
+        const parsed = JSON.parse(rawLocal);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const legacyDrillsToMigrate = parsed.filter(
+            (d: any) => !['drill_overlap_wing', 'drill_gegenpress_trap', 'drill_counter_attack'].includes(d.id)
+          );
+
+          if (legacyDrillsToMigrate.length > 0) {
+            const migrateRes = await fetch('/api/drills/migrate', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+              },
+              credentials: 'include',
+              body: JSON.stringify({ drills: legacyDrillsToMigrate }),
+            });
+            if (migrateRes.ok) {
+              const resData = await migrateRes.json();
+              if (resData.imported > 0) {
+                showToast(`Migrated ${resData.imported} drill(s) from local browser to server`);
+              }
+            }
+          }
+          // Remove legacy local key once processed
+          localStorage.removeItem('coachtactics_drills');
+        }
+      } catch (err) {
+        console.error('Migration error:', err);
+      } finally {
+        fetchServerDrills();
+      }
+    };
+
+    checkAndMigrateLocalStorage();
+  }, [currentUser?.id, authToken, fetchServerDrills]);
 
   // Playback & Animation Engine (Defaults to playing immediately!)
   const [currentPhaseIndex, setCurrentPhaseIndex] = useState(0);
@@ -118,6 +224,7 @@ export default function App() {
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
   const [isLayersOpen, setIsLayersOpen] = useState(false);
   const [isTacticalRoleModalOpen, setIsTacticalRoleModalOpen] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [selectedPlayerForRole, setSelectedPlayerForRole] = useState<TacticalPlayer | null>(null);
   const [pendingNoteCoords, setPendingNoteCoords] = useState<{ x: number; y: number } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -132,7 +239,7 @@ export default function App() {
     if (!currentUser) return [];
     if (currentUser.role === 'CLIENT') {
       return drills.filter(
-        (d) => d.ownerId === currentUser.id || d.ownerId === currentUser.username
+        (d) => d.ownerId === currentUser.id || d.ownerId === currentUser.username || d.createdBy === currentUser.id
       );
     }
     return drills;
@@ -406,18 +513,95 @@ export default function App() {
     showToast('Coaching sticky note pinned to pitch');
   };
 
-  // Player Repositioning in active phase
+  // Player Repositioning in active phase (preserving trajectory offset and keeping state in sync)
   const handlePlayerMoved = (playerId: string, newX: number, newY: number) => {
     setActiveDrill((prevDrill) => {
       const updatedPhases = prevDrill.phases.map((ph, idx) => {
         if (idx !== currentPhaseIndex) return ph;
         const updatedPlayers = ph.players.map((p) => {
           if (p.id !== playerId) return p;
-          return { ...p, x: newX, y: newY, targetX: newX, targetY: newY };
+          const dx = (p.targetX ?? p.x) - p.x;
+          const dy = (p.targetY ?? p.y) - p.y;
+          const updatedTargetX = Math.max(0.02, Math.min(0.98, newX + dx));
+          const updatedTargetY = Math.max(0.02, Math.min(0.98, newY + dy));
+          return {
+            ...p,
+            x: newX,
+            y: newY,
+            targetX: updatedTargetX,
+            targetY: updatedTargetY,
+          };
         });
         return { ...ph, players: updatedPlayers };
       });
-      return { ...prevDrill, phases: updatedPhases };
+      const updated = { ...prevDrill, phases: updatedPhases };
+      setDrills((all) => all.map((d) => (d.id === updated.id ? updated : d)));
+      return updated;
+    });
+  };
+
+  // Player Target / Movement Vector Destination in active phase
+  const handlePlayerTargetMoved = (playerId: string, newTargetX: number, newTargetY: number) => {
+    setActiveDrill((prevDrill) => {
+      const updatedPhases = prevDrill.phases.map((ph, idx) => {
+        if (idx !== currentPhaseIndex) return ph;
+        const updatedPlayers = ph.players.map((p) => {
+          if (p.id !== playerId) return p;
+          return {
+            ...p,
+            targetX: newTargetX,
+            targetY: newTargetY,
+          };
+        });
+        return { ...ph, players: updatedPlayers };
+      });
+      const updated = { ...prevDrill, phases: updatedPhases };
+      setDrills((all) => all.map((d) => (d.id === updated.id ? updated : d)));
+      return updated;
+    });
+  };
+
+  // Ball Destination in active phase
+  const handleBallTargetMoved = (newTargetX: number, newTargetY: number) => {
+    setActiveDrill((prevDrill) => {
+      const updatedPhases = prevDrill.phases.map((ph, idx) => {
+        if (idx !== currentPhaseIndex) return ph;
+        return {
+          ...ph,
+          ball: {
+            ...ph.ball,
+            targetX: newTargetX,
+            targetY: newTargetY,
+          },
+        };
+      });
+      const updated = { ...prevDrill, phases: updatedPhases };
+      setDrills((all) => all.map((d) => (d.id === updated.id ? updated : d)));
+      return updated;
+    });
+  };
+
+  // Ball Repositioning in active phase
+  const handleBallMoved = (newX: number, newY: number) => {
+    setActiveDrill((prevDrill) => {
+      const updatedPhases = prevDrill.phases.map((ph, idx) => {
+        if (idx !== currentPhaseIndex) return ph;
+        const dx = (ph.ball.targetX ?? ph.ball.x) - ph.ball.x;
+        const dy = (ph.ball.targetY ?? ph.ball.y) - ph.ball.y;
+        return {
+          ...ph,
+          ball: {
+            ...ph.ball,
+            x: newX,
+            y: newY,
+            targetX: Math.max(0.02, Math.min(0.98, newX + dx)),
+            targetY: Math.max(0.02, Math.min(0.98, newY + dy)),
+          },
+        };
+      });
+      const updated = { ...prevDrill, phases: updatedPhases };
+      setDrills((all) => all.map((d) => (d.id === updated.id ? updated : d)));
+      return updated;
     });
   };
 
@@ -441,7 +625,9 @@ export default function App() {
         });
         return { ...ph, players: updatedPlayers };
       });
-      return { ...prevDrill, phases: updatedPhases };
+      const updated = { ...prevDrill, phases: updatedPhases };
+      setDrills((all) => all.map((d) => (d.id === updated.id ? updated : d)));
+      return updated;
     });
 
     showToast(`Assigned Tactical Role: "${role}" to #${targetNumber}`);
@@ -459,7 +645,13 @@ export default function App() {
     try {
       // Level 1: Client-Side Instant Cache Check (0ms latency, 0 network requests, 0 API quota)
       if (!forceRefresh) {
-        const localCached = getClientCachedDrill(prompt, formation, focusArea);
+        const localCached = getClientCachedDrill(
+          prompt,
+          formation,
+          focusArea,
+          activeDrill?.pitchView || 'FULL',
+          ecoMode
+        );
         if (localCached) {
           const newDrill: SoccerDrill = {
             ...localCached,
@@ -486,7 +678,11 @@ export default function App() {
       // Level 2: Server-Side Cache & Offline Tactical Engine Call
       const response = await fetch('/api/generate-drill', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
         body: JSON.stringify({
           prompt,
           currentFormation: formation,
@@ -497,20 +693,52 @@ export default function App() {
         }),
       });
 
+      if (response.status === 401) {
+        setCurrentUser(null);
+        setAuthToken(null);
+        showToast('Authentication session expired. Please sign in again.');
+        return;
+      }
+
       const data = await response.json();
       if (data.success && data.drill) {
-        const newDrill: SoccerDrill = {
+        let persistedDrill: SoccerDrill = {
           ...data.drill,
-          id: data.drill.id || `drill_${Date.now()}`,
-          ownerId: currentUser?.id || currentUser?.username,
-          createdByRole: currentUser?.role,
           isCached: data.cached || data.drill.isCached || false,
-          cacheSource: data.drill.cacheSource || (data.cached ? 'server-memory' : data.isTacticalFallback ? 'uefa-offline' : 'gemini-fresh'),
+          cacheSource: data.drill.cacheSource || (data.cached ? 'server-memory' : data.isTacticalFallback ? 'coachtactics-offline' : 'gemini-fresh'),
           quotaSaved: data.quotaSaved ?? true,
         };
 
+        // Persist to authoritative server repository
+        try {
+          const saveRes = await fetch('/api/drills', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            },
+            credentials: 'include',
+            body: JSON.stringify(data.drill),
+          });
+          if (saveRes.ok) {
+            const saveData = await saveRes.json();
+            if (saveData.success && saveData.drill) {
+              persistedDrill = saveData.drill;
+            }
+          }
+        } catch (saveErr) {
+          console.error('Failed to persist drill to server repository:', saveErr);
+        }
+
         // Cache newly generated drill in client storage for future instant 0ms hits
-        saveDrillToClientCache(prompt, newDrill, formation, focusArea);
+        saveDrillToClientCache(
+          prompt,
+          persistedDrill,
+          formation,
+          focusArea,
+          activeDrill?.pitchView || 'FULL',
+          ecoMode
+        );
 
         if (data.cached) {
           incrementQuotaStat('serverHits');
@@ -521,19 +749,19 @@ export default function App() {
         }
         setQuotaStats(getQuotaStats());
 
-        setDrills((prev) => [newDrill, ...prev]);
-        setActiveDrill(newDrill);
+        setDrills((prev) => [persistedDrill, ...prev.filter((d) => d.id !== persistedDrill.id)]);
+        setActiveDrill(persistedDrill);
         setCurrentPhaseIndex(0);
         setAnimationFraction(0);
         setIsPlaying(true);
         setIsVoicePromptOpen(false);
 
         if (data.cached) {
-          showToast(`⚡ Tactical Cache Hit (0 API cost): "${newDrill.title}"`);
+          showToast(`⚡ Tactical Cache Hit (0 API cost): "${persistedDrill.title}"`);
         } else if (data.isTacticalFallback || data.ecoMode) {
-          showToast(`🌿 UEFA Tactical Engine (0 API quota used): "${newDrill.title}"`);
+          showToast(`🌿 CoachTactics Tactical Engine (0 API quota used): "${persistedDrill.title}"`);
         } else {
-          showToast(`✨ Generated with Gemini Flash-Lite: "${newDrill.title}"`);
+          showToast(`✨ Generated with Gemini Flash-Lite: "${persistedDrill.title}"`);
         }
       } else {
         showToast(data.error || 'Drill generation error. Please try again.');
@@ -546,20 +774,62 @@ export default function App() {
     }
   };
 
+  // Delete drill from server repository
+  const handleDeleteDrill = async (drillId: string) => {
+    try {
+      const res = await fetch(`/api/drills/${drillId}`, {
+        method: 'DELETE',
+        headers: {
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Failed to delete drill');
+        return;
+      }
+      setDrills((prev) => {
+        const remaining = prev.filter((d) => d.id !== drillId);
+        if (activeDrill?.id === drillId) {
+          setActiveDrill(remaining[0] || DEFAULT_TACTICAL_DRILLS[0]);
+        }
+        return remaining;
+      });
+      showToast('Drill removed from tactical playbook');
+    } catch (err) {
+      console.error('Failed to delete drill:', err);
+      showToast('Network error deleting drill');
+    }
+  };
+
   // Fast Tactical Adjustments (e.g. "+1 Defender Press", "Fullback Overlap")
   const handleFastChange = async (changeType: string) => {
     try {
       const response = await fetch('/api/fast-change', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
         body: JSON.stringify({
           drill: activeDrill,
           changeType,
         }),
       });
+
+      if (response.status === 401) {
+        setCurrentUser(null);
+        setAuthToken(null);
+        showToast('Authentication session expired. Please sign in again.');
+        return;
+      }
+
       const data = await response.json();
       if (data.success && data.drill) {
         setActiveDrill(data.drill);
+        setDrills((prev) => prev.map((d) => (d.id === data.drill.id ? data.drill : d)));
         setAnimationFraction(0);
         setIsPlaying(true);
         showToast(`Tactical Adjustment Applied: ${changeType}`);
@@ -571,19 +841,74 @@ export default function App() {
 
   // Toggle Pitch View (FULL / HALF)
   const handleTogglePitchView = () => {
-    const nextView = activeDrill.pitchView === 'HALF' ? 'FULL' : 'HALF';
-    setActiveDrill((prev) => ({ ...prev, pitchView: nextView }));
+    const nextView: 'FULL' | 'HALF' = activeDrill.pitchView === 'HALF' ? 'FULL' : 'HALF';
+    setActiveDrill((prev) => {
+      const updated: SoccerDrill = { ...prev, pitchView: nextView };
+      setDrills((all) => all.map((d) => (d.id === updated.id ? updated : d)));
+      return updated;
+    });
     showToast(`Switched to ${nextView} Pitch View`);
   };
 
-  // Authentication Handlers
-  const handleLoginSuccess = (user: UserProfile) => {
-    setCurrentUser(user);
+  // Authoritative Server-Side Save for Currently Edited Tactical Plan
+  const handleSaveCurrentDrill = async () => {
+    if (!activeDrill) return;
+    setIsSavingDrill(true);
     try {
-      localStorage.setItem('coachtactics_current_user', JSON.stringify(user));
+      const isOwned =
+        Boolean(currentUser) &&
+        (activeDrill.createdBy === currentUser?.id || activeDrill.ownerId === currentUser?.id);
+      const isSystem = activeDrill.isSystem === true;
+
+      const url = isOwned && !isSystem ? `/api/drills/${activeDrill.id}` : '/api/drills';
+      const method = isOwned && !isSystem ? 'PUT' : 'POST';
+
+      const payload = isOwned && !isSystem
+        ? activeDrill
+        : {
+            ...activeDrill,
+            id: `drill_${Date.now()}`,
+            title: isSystem ? `${activeDrill.title} (Custom)` : activeDrill.title,
+            isSystem: false,
+          };
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+
+      if (res.status === 401) {
+        showToast('Please sign in to save your tactical plan to the playbook.');
+        setIsLoginModalOpen(true);
+        return;
+      }
+
+      const data = await res.json();
+      if (res.ok && data.success && data.drill) {
+        const saved = data.drill;
+        setActiveDrill(saved);
+        setDrills((prev) => [saved, ...prev.filter((d) => d.id !== saved.id)]);
+        showToast(`Saved "${saved.title}" (v${saved.version}) to playbook`);
+      } else {
+        showToast(data.error || 'Failed to save tactical plan.');
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Save error:', err);
+      showToast('Network error saving tactical plan.');
+    } finally {
+      setIsSavingDrill(false);
     }
+  };
+
+  // Authentication Handlers (Server-Backed)
+  const handleLoginSuccess = (user: UserProfile, token?: string) => {
+    setCurrentUser(user);
+    if (token) setAuthToken(token);
     setIsLoginModalOpen(false);
 
     // If first login and needs email setup, trigger FirstLoginEmailModal
@@ -594,34 +919,43 @@ export default function App() {
     }
   };
 
-  const handleFirstLoginEmailSubmit = (email: string) => {
+  const handleFirstLoginEmailSubmit = async (email: string) => {
     if (!currentUser) return;
-    const updatedUser: UserProfile = {
-      ...currentUser,
-      email,
-      needsEmailSetup: false,
-    };
-    setCurrentUser(updatedUser);
-    setUsers((prev) => {
-      const updated = prev.map((u) => (u.id === currentUser.id ? updatedUser : u));
-      try {
-        localStorage.setItem('coachtactics_users', JSON.stringify(updated));
-      } catch (err) {
-        console.error(err);
-      }
-      return updated;
-    });
     try {
-      localStorage.setItem('coachtactics_current_user', JSON.stringify(updatedUser));
+      const res = await fetch('/api/auth/me/email', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.user) {
+        setCurrentUser(data.user);
+        setIsFirstLoginEmailModalOpen(false);
+        showToast(`Email ${email} linked to @${data.user.username}!`);
+      } else {
+        showToast(data.error || 'Failed to update email address.');
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to link email:', err);
+      showToast('Network error updating email.');
     }
-    setIsFirstLoginEmailModalOpen(false);
-    showToast(`Email ${email} linked to @${currentUser.username}!`);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
     setCurrentUser(null);
+    setAuthToken(null);
     try {
       localStorage.removeItem('coachtactics_current_user');
     } catch (err) {
@@ -631,58 +965,89 @@ export default function App() {
     showToast('Logged out of tactical session');
   };
 
-  // Super Admin CRUD Handlers
-  const handleAddUser = (newUserFields: Omit<UserProfile, 'id'>) => {
-    const newUser: UserProfile = {
-      ...newUserFields,
-      id: `user_${Date.now()}`,
-    };
-    setUsers((prev) => {
-      const updated = [...prev, newUser];
-      try {
-        localStorage.setItem('coachtactics_users', JSON.stringify(updated));
-      } catch (err) {
-        console.error(err);
+  // Super Admin User Management (Server-Authoritative CRUD)
+  const handleAddUser = async (newUserFields: Omit<UserProfile, 'id'>) => {
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify(newUserFields),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Failed to create user');
+        return;
       }
-      return updated;
-    });
-    showToast(`Added User @${newUser.username} (${newUser.role})`);
-  };
-
-  const handleUpdateUser = (id: string, updates: Partial<UserProfile>) => {
-    setUsers((prev) => {
-      const updated = prev.map((u) => (u.id === id ? { ...u, ...updates } : u));
-      try {
-        localStorage.setItem('coachtactics_users', JSON.stringify(updated));
-      } catch (err) {
-        console.error(err);
-      }
-      return updated;
-    });
-    if (currentUser && currentUser.id === id) {
-      const updatedCurrent = { ...currentUser, ...updates };
-      setCurrentUser(updatedCurrent);
-      try {
-        localStorage.setItem('coachtactics_current_user', JSON.stringify(updatedCurrent));
-      } catch (err) {
-        console.error(err);
-      }
+      setUsers((prev) => [...prev, data.user]);
+      showToast(`Added User @${data.user.username} (${data.user.role})`);
+    } catch (err) {
+      console.error(err);
+      showToast('Network error creating user');
     }
-    showToast('User profile updated');
   };
 
-  const handleDeleteUser = (id: string) => {
-    setUsers((prev) => {
-      const updated = prev.filter((u) => u.id !== id);
-      try {
-        localStorage.setItem('coachtactics_users', JSON.stringify(updated));
-      } catch (err) {
-        console.error(err);
+  const handleUpdateUser = async (id: string, updates: Partial<UserProfile>) => {
+    try {
+      const res = await fetch(`/api/users/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Failed to update user');
+        return;
       }
-      return updated;
-    });
-    showToast('User account removed');
+      setUsers((prev) => prev.map((u) => (u.id === id ? data.user : u)));
+      if (currentUser && currentUser.id === id) {
+        setCurrentUser(data.user);
+      }
+      showToast('User profile updated');
+    } catch (err) {
+      console.error(err);
+      showToast('Network error updating user');
+    }
   };
+
+  const handleDeleteUser = async (id: string) => {
+    try {
+      const res = await fetch(`/api/users/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(data.error || 'Failed to delete user');
+        return;
+      }
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      showToast('User account removed');
+    } catch (err) {
+      console.error(err);
+      showToast('Network error deleting user');
+    }
+  };
+
+  // 0. Auth Verification State: display smooth tactical loader while verifying server session
+  if (isAuthChecking) {
+    return (
+      <div id="coach-tactics-auth-loading" className="min-h-screen bg-[#070D15] text-white flex flex-col items-center justify-center gap-3">
+        <div className="w-10 h-10 border-2 border-[#00E5FF] border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs text-gray-400 font-medium">Verifying tactical credentials...</span>
+      </div>
+    );
+  }
 
   // 1. Mandatory Visitor Login Gateway: if no user is authenticated, prompt LoginModal
   if (!currentUser) {
@@ -699,7 +1064,6 @@ export default function App() {
         )}
         <LoginModal
           isOpen={true}
-          users={users}
           onLoginSuccess={handleLoginSuccess}
         />
       </div>
@@ -836,6 +1200,17 @@ export default function App() {
               </button>
             )}
 
+            {/* Coach Plan Editor Tutorial Guide */}
+            <button
+              id="header-btn-coach-guide"
+              onClick={() => setIsTutorialOpen(true)}
+              className="px-2.5 py-1.5 bg-[#122235] hover:bg-[#1A314D] border border-[#00E5FF]/40 text-[#00E5FF] hover:text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
+              title="Coach Plan Editor Guide: How to manually create, edit, pass, and choreograph drills"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Coach Guide</span>
+            </button>
+
             {/* Super Admin Manager (Only visible for SUPER_ADMIN role) */}
             {currentUser.role === 'SUPER_ADMIN' && (
               <button
@@ -948,6 +1323,9 @@ export default function App() {
                 showHeatmap={showHeatmap}
                 layers={tacticalLayers}
                 onPlayerMoved={handlePlayerMoved}
+                onPlayerTargetMoved={handlePlayerTargetMoved}
+                onBallMoved={handleBallMoved}
+                onBallTargetMoved={handleBallTargetMoved}
                 onPlayerSelected={(player) => {
                   setHighlightedPlayerNumber(player.number);
                   setSelectedPlayerForRole(player);
@@ -1025,6 +1403,8 @@ export default function App() {
               pitchView={activeDrill.pitchView}
               isFullscreen={isFullscreen}
               phaseSpeeds={phaseSpeeds}
+              onSavePlan={handleSaveCurrentDrill}
+              isSaving={isSavingDrill}
               onTogglePlay={() => setIsPlaying(!isPlaying)}
               onSelectPhase={(idx) => {
                 setCurrentPhaseIndex(idx);
@@ -1058,6 +1438,7 @@ export default function App() {
               }}
               onTogglePitchView={handleTogglePitchView}
               onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
+              onOpenTutorial={() => setIsTutorialOpen(true)}
             />
 
             {/* Telestrator Drawing Suite */}
@@ -1077,6 +1458,7 @@ export default function App() {
                 showToast(!showHeatmap ? 'Intensity Heatmap Overlay Enabled' : 'Intensity Heatmap Overlay Disabled');
               }}
               onToggleLayers={() => setIsLayersOpen((prev) => !prev)}
+              onOpenTutorial={() => setIsTutorialOpen(true)}
               onUndo={handleUndoAnnotation}
               onClearAll={() => setAnnotations([])}
             />
@@ -1165,7 +1547,9 @@ export default function App() {
         onClose={() => setIsPlaybookOpen(false)}
         drills={filteredDrills}
         activeDrillId={activeDrill?.id || ''}
+        currentUser={currentUser}
         onSelectDrill={handleSelectDrill}
+        onDeleteDrill={handleDeleteDrill}
         onOpenVoicePrompt={() => {
           setInitialVoicePrompt('');
           setIsVoicePromptOpen(true);
@@ -1197,6 +1581,13 @@ export default function App() {
         player={selectedPlayerForRole}
         onClose={() => setIsTacticalRoleModalOpen(false)}
         onSelectRole={(role, duty) => handleAssignTacticalRole(role, duty)}
+      />
+
+      {/* Coach Plan Editor Help & Tutorial Modal */}
+      <CoachPlanEditorTutorialModal
+        isOpen={isTutorialOpen}
+        onClose={() => setIsTutorialOpen(false)}
+        onOpenPlaybook={() => setIsPlaybookOpen(true)}
       />
     </div>
   );

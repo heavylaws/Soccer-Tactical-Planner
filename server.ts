@@ -2,430 +2,88 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import cookieParser from "cookie-parser";
 import { GoogleGenAI, Type } from "@google/genai";
+import { authRouter } from "./server/routes/authRoutes.ts";
+import { userRouter } from "./server/routes/userRoutes.ts";
+import { drillRouter } from "./server/drills/drillRoutes.ts";
+import { requireAuth } from "./server/middleware/authMiddleware.ts";
+import { validateTacticalDrill } from "./server/tactical/tacticalValidator.ts";
+import { synthesizeTacticalDrill } from "./server/tactical/tacticalSynthesizer.ts";
+import {
+  generateCacheFingerprint,
+  canonicalizeContext,
+  TacticalGenerationContext,
+  CanonicalGenerationContext,
+  CACHE_VERSION,
+} from "./server/cache/cacheFingerprint.ts";
 
 dotenv.config();
 
-// UEFA Tactical Knowledge Synthesizer matching CoachTactics (heavylaws/CoachPlanner)
-function synthesizeTacticalDrill(prompt: string, formation = "4-3-3", focusArea = "Positional Play", pitchViewChoice = "HALF") {
-  const pLower = prompt.toLowerCase();
-  const isPress = pLower.includes("press") || pLower.includes("trap") || pLower.includes("gegen") || focusArea === "High Press";
-  const isTransition = pLower.includes("counter") || pLower.includes("transition") || pLower.includes("break") || focusArea === "Attacking Transition";
-  const isOverlap = pLower.includes("overlap") || pLower.includes("wing") || pLower.includes("cutback") || pLower.includes("cross");
-  const isCorner = pLower.includes("corner") || pLower.includes("set piece");
-
-  let title = prompt.length > 3 && prompt.length < 50 ? prompt.charAt(0).toUpperCase() + prompt.slice(1) : "Dynamic Attacking Combination";
-  let category = focusArea || "Tactical Mastery";
-  let pitchView = (pitchViewChoice === "FULL" || isPress || isTransition) ? "FULL" : "HALF";
-
-  if (isPress) {
-    title = "Gegenpressing Midfield Trap & Vertical Break";
-    category = "Defensive Transitions";
-    return {
-      id: `drill_${Date.now()}`,
-      title,
-      category,
-      focusArea: "Trap Triggers & Simultaneous Convergence",
-      durationMinutes: 20,
-      pitchView: "FULL",
-      description: `Coordinated pressing drill generated for coach instructions: "${prompt}". Traps holding midfielder and triggers instant vertical transition.`,
-      coachingCues: [
-        "Trigger press when opponent receiver turns back towards goal",
-        "Simultaneous 3-player angle convergence to cut passing lanes",
-        "First touch upon winning possession must be forward into open channel",
-        "Striker makes immediate blind-side diagonal run",
-      ],
-      phases: [
-        {
-          step: 1,
-          title: "Phase 1: Baiting & Setting the Trap",
-          instruction: "Allow opponent #6 to receive in deep midfield; pressing triangle coordinates posture.",
-          durationSec: 2.8,
-          players: [
-            { id: "opp6", number: 6, role: "DEFENSE", x: 0.50, y: 0.55, targetX: 0.50, targetY: 0.52, label: "Opp #6", hasBall: true },
-            { id: "opp4", number: 4, role: "DEFENSE", x: 0.35, y: 0.70, targetX: 0.36, targetY: 0.68, label: "Opp CB #4" },
-            { id: "opp5", number: 5, role: "DEFENSE", x: 0.65, y: 0.70, targetX: 0.64, targetY: 0.68, label: "Opp CB #5" },
-            { id: "press8", number: 8, role: "ATTACK", x: 0.52, y: 0.42, targetX: 0.50, targetY: 0.48, label: "Press #8" },
-            { id: "press10", number: 10, role: "ATTACK", x: 0.38, y: 0.45, targetX: 0.42, targetY: 0.50, label: "Press #10" },
-            { id: "press9", number: 9, role: "ATTACK", x: 0.62, y: 0.45, targetX: 0.58, targetY: 0.48, label: "Press #9" },
-            { id: "oppGk", number: 1, role: "GOALKEEPER", x: 0.50, y: 0.90, targetX: 0.50, targetY: 0.88, label: "Opp GK" },
-          ],
-          ball: { x: 0.50, y: 0.55, targetX: 0.50, targetY: 0.52, trajectory: "DRIBBLE" },
-          equipment: [
-            { id: "cone1", type: "CONE", x: 0.35, y: 0.45 },
-            { id: "cone2", type: "CONE", x: 0.65, y: 0.45 },
-          ],
-        },
-        {
-          step: 2,
-          title: "Phase 2: Snapping the Trap",
-          instruction: "Opp #6 turns into trouble; #8 and #10 converge simultaneously to dispossess.",
-          durationSec: 2.5,
-          players: [
-            { id: "opp6", number: 6, role: "DEFENSE", x: 0.50, y: 0.52, targetX: 0.50, targetY: 0.52, label: "Opp #6" },
-            { id: "opp4", number: 4, role: "DEFENSE", x: 0.36, y: 0.68, targetX: 0.35, targetY: 0.65, label: "Opp CB #4" },
-            { id: "opp5", number: 5, role: "DEFENSE", x: 0.64, y: 0.68, targetX: 0.65, targetY: 0.65, label: "Opp CB #5" },
-            { id: "press8", number: 8, role: "ATTACK", x: 0.50, y: 0.48, targetX: 0.51, targetY: 0.52, label: "Press #8", hasBall: true },
-            { id: "press10", number: 10, role: "ATTACK", x: 0.42, y: 0.50, targetX: 0.47, targetY: 0.52, label: "Press #10" },
-            { id: "press9", number: 9, role: "ATTACK", x: 0.58, y: 0.48, targetX: 0.62, targetY: 0.35, label: "Press #9" },
-            { id: "oppGk", number: 1, role: "GOALKEEPER", x: 0.50, y: 0.88, targetX: 0.50, targetY: 0.88, label: "Opp GK" },
-          ],
-          ball: { x: 0.50, y: 0.52, targetX: 0.51, targetY: 0.52, trajectory: "GROUND_PASS" },
-          equipment: [
-            { id: "cone1", type: "CONE", x: 0.35, y: 0.45 },
-            { id: "cone2", type: "CONE", x: 0.65, y: 0.45 },
-          ],
-        },
-        {
-          step: 3,
-          title: "Phase 3: Immediate Vertical Counter",
-          instruction: "#8 wins possession and punches instant through-ball to sprinting #9 behind defense!",
-          durationSec: 2.8,
-          players: [
-            { id: "opp6", number: 6, role: "DEFENSE", x: 0.50, y: 0.52, targetX: 0.48, targetY: 0.54, label: "Opp #6" },
-            { id: "opp4", number: 4, role: "DEFENSE", x: 0.35, y: 0.65, targetX: 0.42, targetY: 0.50, label: "Opp CB #4" },
-            { id: "opp5", number: 5, role: "DEFENSE", x: 0.65, y: 0.65, targetX: 0.58, targetY: 0.50, label: "Opp CB #5" },
-            { id: "press8", number: 8, role: "ATTACK", x: 0.51, y: 0.52, targetX: 0.51, targetY: 0.45, label: "Press #8" },
-            { id: "press10", number: 10, role: "ATTACK", x: 0.47, y: 0.52, targetX: 0.45, targetY: 0.38, label: "Press #10" },
-            { id: "press9", number: 9, role: "ATTACK", x: 0.62, y: 0.35, targetX: 0.55, targetY: 0.18, label: "Press #9", hasBall: true },
-            { id: "oppGk", number: 1, role: "GOALKEEPER", x: 0.50, y: 0.88, targetX: 0.50, targetY: 0.85, label: "Opp GK" },
-          ],
-          ball: { x: 0.51, y: 0.52, targetX: 0.55, targetY: 0.18, trajectory: "GROUND_PASS" },
-          equipment: [
-            { id: "cone1", type: "CONE", x: 0.35, y: 0.45 },
-            { id: "cone2", type: "CONE", x: 0.65, y: 0.45 },
-          ],
-        },
-      ],
-    };
-  }
-
-  // Pep Guardiola Box Midfield Overload
-  if (pLower.includes("box") || pLower.includes("guardiola") || pLower.includes("possession") || pLower.includes("tiki") || pLower.includes("3-2-5")) {
-    return {
-      id: `drill_${Date.now()}`,
-      title: "Pep Guardiola 3-2-5 Box Midfield Overload",
-      category: "Positional Play",
-      focusArea: "Half-Space Penetration & 1v1 Winger Isolation",
-      durationMinutes: 22,
-      pitchView: "HALF",
-      description: `Structured positional play drill creating a 4-man central box (double pivot + dual attacking 8s) to fix defenders and release the isolated winger.`,
-      coachingCues: [
-        "Playmaker waits until defensive mid commits before releasing pass",
-        "Attacking #10 positions strictly between lines in half-space",
-        "Winger maintains maximum width with toe on the touchline",
-        "Attacking fullback provides secure rest-defense coverage",
-      ],
-      phases: [
-        {
-          step: 1,
-          title: "Phase 1: Establishing the Central Box",
-          instruction: "Double pivot circulates ball cleanly, inviting pressure from opponent midfield line.",
-          durationSec: 2.8,
-          players: [
-            { id: "dm6", number: 6, role: "ATTACK", x: 0.42, y: 0.75, targetX: 0.44, targetY: 0.70, label: "Pivot #6", hasBall: true },
-            { id: "dm8", number: 8, role: "ATTACK", x: 0.58, y: 0.75, targetX: 0.56, targetY: 0.70, label: "Pivot #8" },
-            { id: "am10", number: 10, role: "ATTACK", x: 0.35, y: 0.45, targetX: 0.38, targetY: 0.40, label: "Pocket #10" },
-            { id: "am7", number: 17, role: "ATTACK", x: 0.65, y: 0.45, targetX: 0.62, targetY: 0.40, label: "Pocket #17" },
-            { id: "w11", number: 11, role: "ATTACK", x: 0.12, y: 0.40, targetX: 0.12, targetY: 0.32, label: "LW #11" },
-            { id: "st9", number: 9, role: "ATTACK", x: 0.50, y: 0.30, targetX: 0.52, targetY: 0.25, label: "ST #9" },
-            { id: "def4", number: 4, role: "DEFENSE", x: 0.42, y: 0.52, targetX: 0.43, targetY: 0.58, label: "Def CM" },
-            { id: "def8", number: 8, role: "DEFENSE", x: 0.58, y: 0.52, targetX: 0.57, targetY: 0.56, label: "Def CM" },
-          ],
-          ball: { x: 0.42, y: 0.75, targetX: 0.44, targetY: 0.70, trajectory: "DRIBBLE" },
-          equipment: [
-            { id: "cone1", type: "CONE", x: 0.30, y: 0.50 },
-            { id: "cone2", type: "CONE", x: 0.70, y: 0.50 },
-          ],
-        },
-        {
-          step: 2,
-          title: "Phase 2: Breaking Lines into Pocket #10",
-          instruction: "Pivot #6 threads sharp vertical ball through the defensive line into pocket #10's front foot.",
-          durationSec: 2.6,
-          players: [
-            { id: "dm6", number: 6, role: "ATTACK", x: 0.44, y: 0.70, targetX: 0.45, targetY: 0.65, label: "Pivot #6" },
-            { id: "dm8", number: 8, role: "ATTACK", x: 0.56, y: 0.70, targetX: 0.55, targetY: 0.65, label: "Pivot #8" },
-            { id: "am10", number: 10, role: "ATTACK", x: 0.38, y: 0.40, targetX: 0.36, targetY: 0.35, label: "Pocket #10", hasBall: true },
-            { id: "am7", number: 17, role: "ATTACK", x: 0.62, y: 0.40, targetX: 0.65, targetY: 0.30, label: "Pocket #17" },
-            { id: "w11", number: 11, role: "ATTACK", x: 0.12, y: 0.32, targetX: 0.14, targetY: 0.22, label: "LW #11" },
-            { id: "st9", number: 9, role: "ATTACK", x: 0.52, y: 0.25, targetX: 0.50, targetY: 0.20, label: "ST #9" },
-            { id: "def4", number: 4, role: "DEFENSE", x: 0.43, y: 0.58, targetX: 0.40, targetY: 0.48, label: "Def CM" },
-            { id: "def8", number: 8, role: "DEFENSE", x: 0.57, y: 0.56, targetX: 0.50, targetY: 0.45, label: "Def CM" },
-          ],
-          ball: { x: 0.44, y: 0.70, targetX: 0.36, targetY: 0.35, trajectory: "GROUND_PASS" },
-          equipment: [
-            { id: "cone1", type: "CONE", x: 0.30, y: 0.50 },
-            { id: "cone2", type: "CONE", x: 0.70, y: 0.50 },
-          ],
-        },
-        {
-          step: 3,
-          title: "Phase 3: Half-Turn & Isolation Release to LW",
-          instruction: "Pocket #10 executes half-turn and slides diagonal pass to isolate LW #11 for 1v1 dribble.",
-          durationSec: 2.7,
-          players: [
-            { id: "dm6", number: 6, role: "ATTACK", x: 0.45, y: 0.65, targetX: 0.48, targetY: 0.60, label: "Pivot #6" },
-            { id: "dm8", number: 8, role: "ATTACK", x: 0.55, y: 0.65, targetX: 0.54, targetY: 0.58, label: "Pivot #8" },
-            { id: "am10", number: 10, role: "ATTACK", x: 0.36, y: 0.35, targetX: 0.38, targetY: 0.25, label: "Pocket #10" },
-            { id: "am7", number: 17, role: "ATTACK", x: 0.65, y: 0.30, targetX: 0.60, targetY: 0.18, label: "Pocket #17" },
-            { id: "w11", number: 11, role: "ATTACK", x: 0.14, y: 0.22, targetX: 0.18, targetY: 0.15, label: "LW #11", hasBall: true },
-            { id: "st9", number: 9, role: "ATTACK", x: 0.50, y: 0.20, targetX: 0.48, targetY: 0.12, label: "ST #9" },
-            { id: "def4", number: 4, role: "DEFENSE", x: 0.40, y: 0.48, targetX: 0.35, targetY: 0.30, label: "Def CM" },
-            { id: "def8", number: 8, role: "DEFENSE", x: 0.50, y: 0.45, targetX: 0.45, targetY: 0.25, label: "Def CM" },
-          ],
-          ball: { x: 0.36, y: 0.35, targetX: 0.18, targetY: 0.15, trajectory: "GROUND_PASS" },
-          equipment: [
-            { id: "cone1", type: "CONE", x: 0.30, y: 0.50 },
-            { id: "cone2", type: "CONE", x: 0.70, y: 0.50 },
-          ],
-        },
-      ],
-    };
-  }
-
-  // Set-Piece / Corner routine
-  if (isCorner) {
-    return {
-      id: `drill_${Date.now()}`,
-      title: "Near-Post Decoy Corner Routine & Edge Strike",
-      category: "Set Piece Routines",
-      focusArea: "Decoy Runs & Late Box Edge Arrival",
-      durationMinutes: 15,
-      pitchView: "HALF",
-      description: `Corner routine where two near-post decoys pull defensive marking away, clearing a shooting alley for the arriving midfielder on the edge of the 18-yard box.`,
-      coachingCues: [
-        "Near post runner must sprint with 100% conviction to drag markers",
-        "Edge of box midfielder timing must match delivery trajectory",
-        "Keep strike low, driving through the crowded penalty box",
-      ],
-      phases: [
-        {
-          step: 1,
-          title: "Phase 1: Starting Setup & Decoy Motion",
-          instruction: "Corner taker raises arm; near post runners initiate decoy dash towards near post flag.",
-          durationSec: 2.5,
-          players: [
-            { id: "taker", number: 11, role: "ATTACK", x: 0.98, y: 0.05, targetX: 0.98, targetY: 0.05, label: "Taker #11", hasBall: true },
-            { id: "decoy1", number: 9, role: "ATTACK", x: 0.55, y: 0.18, targetX: 0.75, targetY: 0.10, label: "Decoy #9" },
-            { id: "decoy2", number: 5, role: "ATTACK", x: 0.45, y: 0.20, targetX: 0.65, targetY: 0.12, label: "Decoy #5" },
-            { id: "shooter", number: 8, role: "ATTACK", x: 0.50, y: 0.40, targetX: 0.50, targetY: 0.28, label: "Shooter #8" },
-            { id: "gk", number: 1, role: "GOALKEEPER", x: 0.50, y: 0.08, targetX: 0.55, targetY: 0.08, label: "GK" },
-            { id: "def1", number: 3, role: "DEFENSE", x: 0.58, y: 0.16, targetX: 0.72, targetY: 0.11, label: "Marker" },
-            { id: "def2", number: 4, role: "DEFENSE", x: 0.48, y: 0.18, targetX: 0.62, targetY: 0.13, label: "Marker" },
-          ],
-          ball: { x: 0.98, y: 0.05, targetX: 0.98, targetY: 0.05, trajectory: "DRIBBLE" },
-        },
-        {
-          step: 2,
-          title: "Phase 2: Driven Cutback Delivery to Edge of Box",
-          instruction: "Taker cuts back pass along the turf, bypassing the near-post cluster to open Shooter #8.",
-          durationSec: 2.4,
-          players: [
-            { id: "taker", number: 11, role: "ATTACK", x: 0.98, y: 0.05, targetX: 0.92, targetY: 0.08, label: "Taker #11" },
-            { id: "decoy1", number: 9, role: "ATTACK", x: 0.75, y: 0.10, targetX: 0.78, targetY: 0.08, label: "Decoy #9" },
-            { id: "decoy2", number: 5, role: "ATTACK", x: 0.65, y: 0.12, targetX: 0.68, targetY: 0.10, label: "Decoy #5" },
-            { id: "shooter", number: 8, role: "ATTACK", x: 0.50, y: 0.28, targetX: 0.50, targetY: 0.24, label: "Shooter #8", hasBall: true },
-            { id: "gk", number: 1, role: "GOALKEEPER", x: 0.55, y: 0.08, targetX: 0.52, targetY: 0.08, label: "GK" },
-            { id: "def1", number: 3, role: "DEFENSE", x: 0.72, y: 0.11, targetX: 0.74, targetY: 0.10, label: "Marker" },
-            { id: "def2", number: 4, role: "DEFENSE", x: 0.62, y: 0.13, targetX: 0.64, targetY: 0.12, label: "Marker" },
-          ],
-          ball: { x: 0.98, y: 0.05, targetX: 0.50, targetY: 0.24, trajectory: "GROUND_PASS" },
-        },
-        {
-          step: 3,
-          title: "Phase 3: First-Time Driven Finish",
-          instruction: "Shooter #8 drives a powerful low finish into the bottom left corner.",
-          durationSec: 2.2,
-          players: [
-            { id: "taker", number: 11, role: "ATTACK", x: 0.92, y: 0.08, targetX: 0.90, targetY: 0.12, label: "Taker #11" },
-            { id: "decoy1", number: 9, role: "ATTACK", x: 0.78, y: 0.08, targetX: 0.75, targetY: 0.08, label: "Decoy #9" },
-            { id: "decoy2", number: 5, role: "ATTACK", x: 0.68, y: 0.10, targetX: 0.65, targetY: 0.10, label: "Decoy #5" },
-            { id: "shooter", number: 8, role: "ATTACK", x: 0.50, y: 0.24, targetX: 0.50, targetY: 0.22, label: "Shooter #8" },
-            { id: "gk", number: 1, role: "GOALKEEPER", x: 0.52, y: 0.08, targetX: 0.42, targetY: 0.06, label: "GK" },
-            { id: "def1", number: 3, role: "DEFENSE", x: 0.74, y: 0.10, targetX: 0.70, targetY: 0.10, label: "Marker" },
-            { id: "def2", number: 4, role: "DEFENSE", x: 0.64, y: 0.12, targetX: 0.60, targetY: 0.12, label: "Marker" },
-          ],
-          ball: { x: 0.50, y: 0.24, targetX: 0.44, targetY: 0.04, trajectory: "SHOT" },
-        },
-      ],
-    };
-  }
-
-  // Default attacking combination drill
-  return {
-    id: `drill_${Date.now()}`,
-    title: title || "Overlapping Wing Delivery & Box Attack",
-    category: isTransition ? "Attacking Transitions" : "Attacking Patterns",
-    focusArea: isOverlap ? "Wide Overload & Timing of Runs" : "Spatial Awareness & Coordinated Movement",
-    durationMinutes: 18,
-    pitchView: pitchView as "FULL" | "HALF",
-    description: `Tactical training animation generated for coach prompt: "${prompt}". Focuses on creating numerical superiority and clinical finishing.`,
-    coachingCues: [
-      "Firm, crisp pass into the front foot with optimum weight",
-      "Fullback triggers sprint before ball reaches winger",
-      "Head up to survey blind-side runners in the box",
-      "One-touch clinical finish across the face of goal",
-    ],
-    phases: [
-      {
-        step: 1,
-        title: "Phase 1: Build-Up & Trigger",
-        instruction: "Central Midfielder collects from deep and scans the wide overload.",
-        durationSec: 2.6,
-        players: [
-          { id: "cm8", number: 8, role: "ATTACK", x: 0.50, y: 0.78, targetX: 0.50, targetY: 0.72, label: "CM #8", hasBall: true },
-          { id: "w7", number: 7, role: "ATTACK", x: 0.78, y: 0.60, targetX: 0.75, targetY: 0.52, label: "RW #7" },
-          { id: "rb2", number: 2, role: "ATTACK", x: 0.85, y: 0.80, targetX: 0.88, targetY: 0.62, label: "RB #2" },
-          { id: "st9", number: 9, role: "ATTACK", x: 0.48, y: 0.40, targetX: 0.52, targetY: 0.35, label: "ST #9" },
-          { id: "am10", number: 10, role: "ATTACK", x: 0.35, y: 0.52, targetX: 0.38, targetY: 0.44, label: "AM #10" },
-          { id: "cb4", number: 4, role: "DEFENSE", x: 0.46, y: 0.32, targetX: 0.48, targetY: 0.30, label: "CB #4" },
-          { id: "lb5", number: 5, role: "DEFENSE", x: 0.66, y: 0.35, targetX: 0.68, targetY: 0.32, label: "LB #5" },
-          { id: "gk1", number: 1, role: "GOALKEEPER", x: 0.50, y: 0.12, targetX: 0.50, targetY: 0.14, label: "GK #1" },
-        ],
-        ball: { x: 0.50, y: 0.78, targetX: 0.50, targetY: 0.72, trajectory: "DRIBBLE" },
-        equipment: [
-          { id: "cone1", type: "CONE", x: 0.30, y: 0.50 },
-          { id: "cone2", type: "CONE", x: 0.70, y: 0.50 },
-        ],
-      },
-      {
-        step: 2,
-        title: "Phase 2: Overlapping Release",
-        instruction: "CM slips ball to RW, while RB accelerates on outside overlap into attacking third.",
-        durationSec: 2.8,
-        players: [
-          { id: "cm8", number: 8, role: "ATTACK", x: 0.50, y: 0.72, targetX: 0.55, targetY: 0.60, label: "CM #8" },
-          { id: "w7", number: 7, role: "ATTACK", x: 0.75, y: 0.52, targetX: 0.78, targetY: 0.46, label: "RW #7", hasBall: true },
-          { id: "rb2", number: 2, role: "ATTACK", x: 0.88, y: 0.62, targetX: 0.90, targetY: 0.36, label: "RB #2" },
-          { id: "st9", number: 9, role: "ATTACK", x: 0.52, y: 0.35, targetX: 0.50, targetY: 0.28, label: "ST #9" },
-          { id: "am10", number: 10, role: "ATTACK", x: 0.38, y: 0.44, targetX: 0.40, targetY: 0.34, label: "AM #10" },
-          { id: "cb4", number: 4, role: "DEFENSE", x: 0.48, y: 0.30, targetX: 0.50, targetY: 0.26, label: "CB #4" },
-          { id: "lb5", number: 5, role: "DEFENSE", x: 0.68, y: 0.32, targetX: 0.78, targetY: 0.44, label: "LB #5" },
-          { id: "gk1", number: 1, role: "GOALKEEPER", x: 0.50, y: 0.14, targetX: 0.50, targetY: 0.15, label: "GK #1" },
-        ],
-        ball: { x: 0.50, y: 0.72, targetX: 0.78, targetY: 0.46, trajectory: "GROUND_PASS" },
-        equipment: [
-          { id: "cone1", type: "CONE", x: 0.30, y: 0.50 },
-          { id: "cone2", type: "CONE", x: 0.70, y: 0.50 },
-        ],
-      },
-      {
-        step: 3,
-        title: "Phase 3: Byline Delivery & Darting Run",
-        instruction: "Winger threads pass to overlapping RB who cuts back low cross across 6-yard box!",
-        durationSec: 2.8,
-        players: [
-          { id: "cm8", number: 8, role: "ATTACK", x: 0.55, y: 0.60, targetX: 0.58, targetY: 0.45, label: "CM #8" },
-          { id: "w7", number: 7, role: "ATTACK", x: 0.78, y: 0.46, targetX: 0.72, targetY: 0.38, label: "RW #7" },
-          { id: "rb2", number: 2, role: "ATTACK", x: 0.90, y: 0.36, targetX: 0.88, targetY: 0.20, label: "RB #2", hasBall: true },
-          { id: "st9", number: 9, role: "ATTACK", x: 0.50, y: 0.28, targetX: 0.45, targetY: 0.18, label: "ST #9" },
-          { id: "am10", number: 10, role: "ATTACK", x: 0.40, y: 0.34, targetX: 0.35, targetY: 0.24, label: "AM #10" },
-          { id: "cb4", number: 4, role: "DEFENSE", x: 0.50, y: 0.26, targetX: 0.48, targetY: 0.20, label: "CB #4" },
-          { id: "lb5", number: 5, role: "DEFENSE", x: 0.78, y: 0.44, targetX: 0.82, targetY: 0.28, label: "LB #5" },
-          { id: "gk1", number: 1, role: "GOALKEEPER", x: 0.50, y: 0.15, targetX: 0.55, targetY: 0.14, label: "GK #1" },
-        ],
-        ball: { x: 0.78, y: 0.46, targetX: 0.88, targetY: 0.20, trajectory: "GROUND_PASS" },
-        equipment: [
-          { id: "cone1", type: "CONE", x: 0.30, y: 0.50 },
-          { id: "cone2", type: "CONE", x: 0.70, y: 0.50 },
-        ],
-      },
-      {
-        step: 4,
-        title: "Phase 4: Clinical Finish",
-        instruction: "Striker #9 cuts across CB to finish first-time into the corner of the net!",
-        durationSec: 2.5,
-        players: [
-          { id: "cm8", number: 8, role: "ATTACK", x: 0.58, y: 0.45, targetX: 0.58, targetY: 0.35, label: "CM #8" },
-          { id: "w7", number: 7, role: "ATTACK", x: 0.72, y: 0.38, targetX: 0.70, targetY: 0.28, label: "RW #7" },
-          { id: "rb2", number: 2, role: "ATTACK", x: 0.88, y: 0.20, targetX: 0.85, targetY: 0.18, label: "RB #2" },
-          { id: "st9", number: 9, role: "ATTACK", x: 0.45, y: 0.18, targetX: 0.50, targetY: 0.10, label: "ST #9", hasBall: true },
-          { id: "am10", number: 10, role: "ATTACK", x: 0.35, y: 0.24, targetX: 0.30, targetY: 0.16, label: "AM #10" },
-          { id: "cb4", number: 4, role: "DEFENSE", x: 0.48, y: 0.20, targetX: 0.49, targetY: 0.14, label: "CB #4" },
-          { id: "lb5", number: 5, role: "DEFENSE", x: 0.82, y: 0.28, targetX: 0.76, targetY: 0.20, label: "LB #5" },
-          { id: "gk1", number: 1, role: "GOALKEEPER", x: 0.55, y: 0.14, targetX: 0.50, targetY: 0.08, label: "GK #1" },
-        ],
-        ball: { x: 0.88, y: 0.20, targetX: 0.50, targetY: 0.08, trajectory: "SHOT" },
-        equipment: [
-          { id: "cone1", type: "CONE", x: 0.30, y: 0.50 },
-          { id: "cone2", type: "CONE", x: 0.70, y: 0.50 },
-        ],
-      },
-    ],
-  };
-}
-
-// In-Memory Tactical Drill Cache System (Zero-Cost Quota Preservation)
-const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "with", "from",
-  "drill", "drills", "exercise", "training", "practice", "session", "plan",
-  "tactical", "tactics", "animated", "animation", "please", "generate", "create",
-  "make", "build", "show", "soccer", "football", "coach"
-]);
-
-function normalizePromptToKey(prompt: string, formation = "", focusArea = ""): { key: string; tokens: string[] } {
-  const combined = `${prompt} ${formation} ${focusArea}`.toLowerCase();
-  const tokens = combined
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 1 && !STOP_WORDS.has(w))
-    .sort();
-  const key = tokens.join("_") || "tactical_general";
-  return { key, tokens };
-}
-
-interface CachedDrillEntry {
-  key: string;
-  tokens: string[];
+// Deterministic In-Memory Tactical Drill Cache System (Versioned v2 Fingerprints)
+export interface CachedDrillEntry {
+  fingerprint: string;
+  context: CanonicalGenerationContext;
   drill: any;
   createdAt: number;
   hits: number;
-  source: "uefa-prewarmed" | "uefa-synthesized" | "gemini-cached";
+  source: "coachtactics-prewarmed" | "coachtactics-synthesized" | "gemini-cached";
 }
 
-const drillCache = new Map<string, CachedDrillEntry>();
+export const drillCache = new Map<string, CachedDrillEntry>();
 
-const cacheMetrics = {
+export const cacheMetrics = {
   totalRequests: 0,
   cacheHits: 0,
   apiCalls: 0,
   quotaSaved: 0,
 };
 
-function saveToDrillCache(prompt: string, formation: string, focusArea: string, drill: any, source: CachedDrillEntry["source"]) {
-  const { key, tokens } = normalizePromptToKey(prompt, formation, focusArea);
-  drillCache.set(key, {
-    key,
-    tokens,
-    drill: JSON.parse(JSON.stringify(drill)),
+export function saveToDrillCache(
+  context: TacticalGenerationContext,
+  drill: any,
+  source: CachedDrillEntry["source"]
+): string {
+  const valResult = validateTacticalDrill(drill);
+  if (!valResult.success || !valResult.drill) {
+    console.warn("[Cache] Cannot cache drill that fails tactical domain validation");
+    return "";
+  }
+
+  const canonical = canonicalizeContext(context);
+  const fingerprint = generateCacheFingerprint(canonical);
+
+  drillCache.set(fingerprint, {
+    fingerprint,
+    context: canonical,
+    drill: JSON.parse(JSON.stringify(valResult.drill)),
     createdAt: Date.now(),
     hits: 0,
     source,
   });
+
+  return fingerprint;
 }
 
-function findInDrillCache(prompt: string, formation = "", focusArea = ""): CachedDrillEntry | null {
-  const { key, tokens } = normalizePromptToKey(prompt, formation, focusArea);
-  // 1. Exact key match
-  const exact = drillCache.get(key);
-  if (exact) return exact;
+export function findInDrillCache(context: TacticalGenerationContext): CachedDrillEntry | null {
+  const fingerprint = generateCacheFingerprint(context);
+  // EXACT deterministic key match only - NO fuzzy keyword/token overlap
+  const entry = drillCache.get(fingerprint);
+  if (!entry) return null;
 
-  // 2. Fuzzy token overlap match (if at least 70% of tokens match an existing cached drill)
-  if (tokens.length >= 2) {
-    for (const entry of drillCache.values()) {
-      const matchCount = tokens.filter((t) => entry.tokens.includes(t)).length;
-      const ratio = matchCount / tokens.length;
-      if (ratio >= 0.70) {
-        return entry;
-      }
-    }
+  // Validate cached drill before serving to ensure domain consistency
+  const valResult = validateTacticalDrill(entry.drill);
+  if (!valResult.success || !valResult.drill) {
+    console.warn(`[Cache] Evicting invalid cached drill: ${fingerprint}`);
+    drillCache.delete(fingerprint);
+    return null;
   }
 
-  return null;
+  return entry;
 }
 
-function prewarmCache() {
+export function prewarmCache() {
+  drillCache.clear();
   const seeds = [
     {
       prompt: "3-phase counter attack with overlapping winger and low cutback cross",
@@ -471,7 +129,20 @@ function prewarmCache() {
 
   for (const s of seeds) {
     const drill = synthesizeTacticalDrill(s.prompt, s.formation, s.focusArea, "FULL");
-    saveToDrillCache(s.prompt, s.formation, s.focusArea, drill, "uefa-prewarmed");
+    const valResult = validateTacticalDrill(drill);
+    if (valResult.success && valResult.drill) {
+      saveToDrillCache(
+        {
+          prompt: s.prompt,
+          formation: s.formation,
+          focusArea: s.focusArea,
+          pitchView: "FULL",
+          ecoMode: false,
+        },
+        valResult.drill,
+        "coachtactics-prewarmed"
+      );
+    }
   }
 }
 
@@ -479,10 +150,20 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Initialize pre-warmed cache with UEFA drills
+  // Initialize pre-warmed cache with CoachTactics drills
   prewarmCache();
 
   app.use(express.json());
+  app.use(cookieParser());
+
+  // Server Authentication & Identity Routes
+  app.use("/api/auth", authRouter);
+
+  // User Management Routes (Protected)
+  app.use("/api/users", userRouter);
+
+  // Tactical Drill Persistence & Ownership Routes (Protected)
+  app.use("/api/drills", drillRouter);
 
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
@@ -508,22 +189,28 @@ async function startServer() {
       quotaSaved: cacheMetrics.quotaSaved,
       hitRatePercent: hitRate,
       cachedDrillsCount: drillCache.size,
+      cacheVersion: CACHE_VERSION,
     });
   });
 
-  // Clear server cache
-  app.post("/api/clear-cache", (_req, res) => {
+  // Clear server cache (Protected)
+  app.post("/api/clear-cache", requireAuth, (_req, res) => {
     drillCache.clear();
     prewarmCache();
     cacheMetrics.totalRequests = 0;
     cacheMetrics.cacheHits = 0;
     cacheMetrics.apiCalls = 0;
     cacheMetrics.quotaSaved = 0;
-    res.json({ success: true, message: "Tactical cache refreshed and re-seeded." });
+    res.json({
+      success: true,
+      message: "Tactical cache refreshed and re-seeded with v2 fingerprints.",
+      cachedDrillsCount: drillCache.size,
+      cacheVersion: CACHE_VERSION,
+    });
   });
 
-  // Generate Animated Tactical Drill with Cache-First Strategy
-  app.post("/api/generate-drill", async (req, res) => {
+  // Generate Animated Tactical Drill with Cache-First Strategy (Protected)
+  app.post("/api/generate-drill", requireAuth, async (req, res) => {
     const { prompt, currentFormation, focusArea, pitchView, forceRefresh, ecoMode } = req.body || {};
 
     if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
@@ -532,11 +219,19 @@ async function startServer() {
       });
     }
 
+    const genContext: TacticalGenerationContext = {
+      prompt,
+      formation: currentFormation,
+      focusArea,
+      pitchView,
+      ecoMode: !!ecoMode,
+    };
+
     cacheMetrics.totalRequests++;
 
-    // 1. Cache-First Check (Zero API Call, Instant 0ms Latency)
+    // 1. Cache-First Check (Zero API Call, Instant 0ms Latency, Exact Deterministic Match)
     if (!forceRefresh) {
-      const cached = findInDrillCache(prompt, currentFormation, focusArea);
+      const cached = findInDrillCache(genContext);
       if (cached) {
         cached.hits++;
         cacheMetrics.cacheHits++;
@@ -553,30 +248,42 @@ async function startServer() {
           cached: true,
           cacheHits: cached.hits,
           quotaSaved: true,
+          fingerprint: cached.fingerprint,
           message: "Loaded from Tactical Cache (0 API calls, $0 quota used).",
         });
       }
     }
 
-    // 2. Eco / Free Mode Check (Synthesizes UEFA tactics locally at $0 cost)
+    // 2. Eco / Free Mode Check (Synthesizes CoachTactics tactics locally at $0 cost)
     if (ecoMode) {
+      const rawSynthesized = synthesizeTacticalDrill(prompt, currentFormation, focusArea, pitchView);
+      const valResult = validateTacticalDrill(rawSynthesized);
+      if (!valResult.success || !valResult.drill) {
+        console.error("Eco mode synthesized drill validation failed:", valResult.errors);
+        return res.status(422).json({
+          success: false,
+          error: "Tactical domain validation failed on synthesized drill.",
+          details: valResult.errors,
+        });
+      }
       cacheMetrics.cacheHits++;
       cacheMetrics.quotaSaved++;
-      const synthesized = synthesizeTacticalDrill(prompt, currentFormation, focusArea, pitchView);
-      saveToDrillCache(prompt, currentFormation, focusArea, synthesized, "uefa-synthesized");
+      const synthesized = valResult.drill;
+      const cachedFp = saveToDrillCache(genContext, synthesized, "coachtactics-synthesized");
       return res.json({
         success: true,
         drill: {
           ...synthesized,
           id: `drill_eco_${Date.now()}`,
           isCached: true,
-          cacheSource: "uefa-offline",
+          cacheSource: "coachtactics-offline",
           quotaSaved: true,
         },
         cached: true,
         quotaSaved: true,
         ecoMode: true,
-        message: "Generated via UEFA Tactical Engine ($0 API cost, quota preserved).",
+        fingerprint: cachedFp,
+        message: "Generated via CoachTactics Tactical Engine ($0 API cost, quota preserved).",
       });
     }
 
@@ -716,15 +423,21 @@ Ensure realistic player movements, passing trajectories, and 3 to 4 sequential p
 
           const rawText = response.text?.trim();
           if (rawText) {
-            drillData = JSON.parse(rawText);
-            drillData.id = `drill_ai_${Date.now()}`;
-            drillData.isCached = false;
-            drillData.cacheSource = "gemini-fresh";
-            drillData.quotaSaved = false;
-            cacheMetrics.apiCalls++;
-            // Save to server cache for future zero-cost hits
-            saveToDrillCache(prompt, currentFormation, focusArea, drillData, "gemini-cached");
-            break;
+            const parsed = JSON.parse(rawText);
+            const validation = validateTacticalDrill(parsed);
+            if (validation.success && validation.drill) {
+              drillData = validation.drill;
+              drillData.id = `drill_ai_${Date.now()}`;
+              drillData.isCached = false;
+              drillData.cacheSource = "gemini-fresh";
+              drillData.quotaSaved = false;
+              cacheMetrics.apiCalls++;
+              // Save validated drill to server cache for future zero-cost hits
+              saveToDrillCache(genContext, drillData, "gemini-cached");
+              break;
+            } else {
+              console.warn(`Model ${modelName} output failed tactical domain validation:`, validation.errors);
+            }
           }
         } catch (modelErr: any) {
           console.log(`Model ${modelName} unavailable, checking next candidate model...`);
@@ -747,26 +460,36 @@ Ensure realistic player movements, passing trajectories, and 3 to 4 sequential p
 
     // High demand fallback (Overload, rate limit, 503, or network outage)
     cacheMetrics.quotaSaved++;
-    const synthesized = synthesizeTacticalDrill(prompt, currentFormation, focusArea, pitchView);
-    saveToDrillCache(prompt, currentFormation, focusArea, synthesized, "uefa-synthesized");
+    const rawFallback = synthesizeTacticalDrill(prompt, currentFormation, focusArea, pitchView);
+    const fallbackValidation = validateTacticalDrill(rawFallback);
+    if (!fallbackValidation.success || !fallbackValidation.drill) {
+      console.error("Fallback synthesized drill validation failed:", fallbackValidation.errors);
+      return res.status(422).json({
+        success: false,
+        error: "Tactical domain validation failed on generated fallback drill.",
+        details: fallbackValidation.errors,
+      });
+    }
+    const synthesized = fallbackValidation.drill;
+    saveToDrillCache(genContext, synthesized, "coachtactics-synthesized");
     return res.json({
       success: true,
       drill: {
         ...synthesized,
         id: `drill_synth_${Date.now()}`,
         isCached: true,
-        cacheSource: "uefa-offline",
+        cacheSource: "coachtactics-offline",
         quotaSaved: true,
       },
       isTacticalFallback: true,
       cached: false,
       quotaSaved: true,
-      note: "Drill synthesized with UEFA tactical principles ($0 API cost).",
+      note: "Drill synthesized with CoachTactics tactical principles ($0 API cost).",
     });
   });
 
-  // Fast Tactical Adjustments (e.g. "+1 Defender Press", "Add 2 Mini-Goals", "Fullback Overlap")
-  app.post("/api/fast-change", (req, res) => {
+  // Fast Tactical Adjustments (Protected)
+  app.post("/api/fast-change", requireAuth, (req, res) => {
     const { drill, changeType } = req.body || {};
     if (!drill) {
       return res.status(400).json({ error: "Active drill is required" });
@@ -827,7 +550,17 @@ Ensure realistic player movements, passing trajectories, and 3 to 4 sequential p
       updatedDrill.pitchView = updatedDrill.pitchView === "HALF" ? "FULL" : "HALF";
     }
 
-    return res.json({ success: true, drill: updatedDrill });
+    // Validate the modified tactical drill through the canonical validator
+    const valResult = validateTacticalDrill(updatedDrill);
+    if (!valResult.success || !valResult.drill) {
+      return res.status(422).json({
+        success: false,
+        error: "Tactical domain validation failed on adjusted drill.",
+        details: valResult.errors,
+      });
+    }
+
+    return res.json({ success: true, drill: valResult.drill });
   });
 
   // Vite middleware for development
@@ -855,7 +588,9 @@ Ensure realistic player movements, passing trajectories, and 3 to 4 sequential p
   });
 }
 
-startServer().catch((err) => {
-  console.error("Failed to start CoachTactics server:", err);
-  process.exit(1);
-});
+if (process.env.NODE_ENV !== "test") {
+  startServer().catch((err) => {
+    console.error("Failed to start CoachTactics server:", err);
+    process.exit(1);
+  });
+}

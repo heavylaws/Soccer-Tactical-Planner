@@ -32,6 +32,9 @@ interface TacticalPitchViewProps {
   showHeatmap?: boolean;
   layers?: Record<TacticalLayerType, TacticalLayerConfig>;
   onPlayerMoved: (playerId: string, newX: number, newY: number) => void;
+  onPlayerTargetMoved: (playerId: string, targetX: number, targetY: number) => void;
+  onBallMoved?: (newX: number, newY: number) => void;
+  onBallTargetMoved?: (targetX: number, targetY: number) => void;
   onPlayerSelected: (player: TacticalPlayer) => void;
   onPlayerHovered?: (player: TacticalPlayer | null) => void;
   onAddAnnotation: (annotation: TacticalAnnotation) => void;
@@ -59,6 +62,9 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
   showHeatmap = false,
   layers,
   onPlayerMoved,
+  onPlayerTargetMoved,
+  onBallMoved,
+  onBallTargetMoved,
   onPlayerSelected,
   onPlayerHovered,
   onAddAnnotation,
@@ -71,6 +77,9 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
+  const [draggingTargetPlayerId, setDraggingTargetPlayerId] = useState<string | null>(null);
+  const [draggingBall, setDraggingBall] = useState<boolean>(false);
+  const [draggingBallTarget, setDraggingBallTarget] = useState<boolean>(false);
   const [hoveredPlayerNumber, setHoveredPlayerNumber] = useState<number | null>(null);
   const [draftPoints, setDraftPoints] = useState<AnnotationPoint[]>([]);
   const [draftStart, setDraftStart] = useState<AnnotationPoint | null>(null);
@@ -96,7 +105,35 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
 
     if (activeTool === 'MOVE') {
       if (!isEditable) return;
-      // Check if clicking near any player
+      // 1. First check if clicking near destination target handle of any player
+      const clickedTargetPlayer = currentPhase.players.find((p) => {
+        const tx = p.targetX ?? p.x;
+        const ty = p.targetY ?? p.y;
+        return Math.hypot(tx - x, ty - y) < 0.06;
+      });
+      if (clickedTargetPlayer) {
+        setDraggingTargetPlayerId(clickedTargetPlayer.id);
+        onPlayerSelected(clickedTargetPlayer);
+        return;
+      }
+
+      // 2. Check if clicking near ball destination target handle
+      if (currentPhase.ball.targetX != null && currentPhase.ball.targetY != null) {
+        const btx = currentPhase.ball.targetX;
+        const bty = currentPhase.ball.targetY;
+        if (Math.hypot(btx - x, bty - y) < 0.06) {
+          setDraggingBallTarget(true);
+          return;
+        }
+      }
+
+      // 3. Check if clicking near ball marker
+      if (Math.hypot(currentPhase.ball.x - x, currentPhase.ball.y - y) < 0.06) {
+        setDraggingBall(true);
+        return;
+      }
+
+      // 4. Check if clicking near any player marker body
       const clickedPlayer = currentPhase.players.find((p) => {
         const d = Math.hypot(p.x - x, p.y - y);
         return d < 0.08;
@@ -122,12 +159,13 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
   const handlePointerMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     const { x, y } = getNormalizedCoords(e);
 
-    // Detect hovered player for tactical role tooltips and highlights
-    if (!draggingPlayerId) {
+    // Detect hovered player for tactical role tooltips and highlights (using authoritative target interpolation)
+    if (!draggingPlayerId && !draggingTargetPlayerId && !draggingBall && !draggingBallTarget) {
       const hovered = currentPhase.players.find((p) => {
-        const nextP = nextPhase?.players?.find((np) => np.id === p.id) || p;
-        const currentInterpX = p.x + (nextP.x - p.x) * animationFraction;
-        const currentInterpY = p.y + (nextP.y - p.y) * animationFraction;
+        const targetX = p.targetX ?? p.x;
+        const targetY = p.targetY ?? p.y;
+        const currentInterpX = p.x + (targetX - p.x) * animationFraction;
+        const currentInterpY = p.y + (targetY - p.y) * animationFraction;
         const d = Math.hypot(currentInterpX - x, currentInterpY - y);
         return d < 0.055;
       });
@@ -139,8 +177,28 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
       }
     }
 
-    if (activeTool === 'MOVE' && draggingPlayerId) {
-      onPlayerMoved(draggingPlayerId, Math.max(0.05, Math.min(0.95, x)), Math.max(0.05, Math.min(0.95, y)));
+    if (activeTool === 'MOVE' && draggingTargetPlayerId) {
+      onPlayerTargetMoved(
+        draggingTargetPlayerId,
+        Math.max(0.02, Math.min(0.98, x)),
+        Math.max(0.02, Math.min(0.98, y))
+      );
+    } else if (activeTool === 'MOVE' && draggingPlayerId) {
+      onPlayerMoved(
+        draggingPlayerId,
+        Math.max(0.02, Math.min(0.98, x)),
+        Math.max(0.02, Math.min(0.98, y))
+      );
+    } else if (activeTool === 'MOVE' && draggingBallTarget && onBallTargetMoved) {
+      onBallTargetMoved(
+        Math.max(0.02, Math.min(0.98, x)),
+        Math.max(0.02, Math.min(0.98, y))
+      );
+    } else if (activeTool === 'MOVE' && draggingBall && onBallMoved) {
+      onBallMoved(
+        Math.max(0.02, Math.min(0.98, x)),
+        Math.max(0.02, Math.min(0.98, y))
+      );
     } else if (activeTool === 'PEN' && draftPoints.length > 0) {
       setDraftPoints((prev) => [...prev, { x, y }]);
     } else if (['ARROW', 'PASS', 'DRIBBLE', 'ZONE'].includes(activeTool) && draftStart) {
@@ -160,6 +218,9 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
   const handlePointerUp = () => {
     if (activeTool === 'MOVE') {
       setDraggingPlayerId(null);
+      setDraggingTargetPlayerId(null);
+      setDraggingBall(false);
+      setDraggingBallTarget(false);
     } else if (activeTool === 'PEN' && draftPoints.length >= 2) {
       onAddAnnotation({
         id: `ann_${Date.now()}`,
@@ -170,7 +231,58 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         isDashed,
       });
       setDraftPoints([]);
-    } else if (['ARROW', 'PASS', 'DRIBBLE', 'ZONE'].includes(activeTool) && draftStart && draftEnd) {
+    } else if (activeTool === 'ARROW' && draftStart && draftEnd) {
+      const dist = Math.hypot(draftEnd.x - draftStart.x, draftEnd.y - draftStart.y);
+      if (dist > 0.02) {
+        // If movement arrow originates near a player, authoritatively set that player's destination
+        const sourcePlayer = currentPhase.players.find((p) => {
+          return Math.hypot(p.x - draftStart.x, p.y - draftStart.y) < 0.08;
+        });
+        if (sourcePlayer) {
+          onPlayerTargetMoved(
+            sourcePlayer.id,
+            Math.max(0.02, Math.min(0.98, draftEnd.x)),
+            Math.max(0.02, Math.min(0.98, draftEnd.y))
+          );
+        } else {
+          // General pitch movement arrow annotation
+          onAddAnnotation({
+            id: `ann_${Date.now()}`,
+            tool: 'ARROW',
+            points: [draftStart, draftEnd],
+            color: activeColor,
+            strokeWidth: activeStrokeWidth,
+            isDashed,
+          });
+        }
+      }
+      setDraftStart(null);
+      setDraftEnd(null);
+    } else if (activeTool === 'PASS' && draftStart && draftEnd) {
+      const dist = Math.hypot(draftEnd.x - draftStart.x, draftEnd.y - draftStart.y);
+      if (dist > 0.02) {
+        // If pass vector originates near current ball, authoritatively set ball destination
+        const isNearBall =
+          Math.hypot(currentPhase.ball.x - draftStart.x, currentPhase.ball.y - draftStart.y) < 0.08;
+        if (isNearBall && onBallTargetMoved) {
+          onBallTargetMoved(
+            Math.max(0.02, Math.min(0.98, draftEnd.x)),
+            Math.max(0.02, Math.min(0.98, draftEnd.y))
+          );
+        } else {
+          onAddAnnotation({
+            id: `ann_${Date.now()}`,
+            tool: 'PASS',
+            points: [draftStart, draftEnd],
+            color: activeColor,
+            strokeWidth: activeStrokeWidth,
+            isDashed: true,
+          });
+        }
+      }
+      setDraftStart(null);
+      setDraftEnd(null);
+    } else if (['DRIBBLE', 'ZONE'].includes(activeTool) && draftStart && draftEnd) {
       const dist = Math.hypot(draftEnd.x - draftStart.x, draftEnd.y - draftStart.y);
       if (dist > 0.02) {
         onAddAnnotation({
@@ -179,7 +291,7 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
           points: [draftStart, draftEnd],
           color: activeColor,
           strokeWidth: activeStrokeWidth,
-          isDashed: activeTool === 'PASS' || isDashed,
+          isDashed: isDashed,
         });
       }
       setDraftStart(null);
@@ -441,7 +553,7 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
       return layers.NEUTRAL;
     };
 
-    // 4. DRAW MOVEMENT TRAJECTORIES (Vectors to target) - Stacked with Layer Colors
+    // 4. DRAW MOVEMENT TRAJECTORIES & DESTINATION HANDLES - Authoritative Edited Model
     currentPhase.players.forEach((p) => {
       const layer = getLayerForRole(p.role);
       // Skip if layer is hidden or trajectories disabled for this layer
@@ -449,18 +561,21 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         return;
       }
 
-      const nextP = nextPhase?.players?.find((np) => np.id === p.id) || p;
-      const targetScreenX = p.targetX * w;
-      const targetScreenY = p.targetY * h;
+      const tx = p.targetX ?? p.x;
+      const ty = p.targetY ?? p.y;
+      const targetScreenX = tx * w;
+      const targetScreenY = ty * h;
       const curScreenX = p.x * w;
       const curScreenY = p.y * h;
 
       const dist = Math.hypot(targetScreenX - curScreenX, targetScreenY - curScreenY);
+      const isPlayerSelected = highlightedPlayerNumber === p.number || hoveredPlayerNumber === p.number;
+
       if (dist > 15) {
         ctx.save();
         const pathColor = layer?.pathColor || (p.role === 'ATTACK' ? '#00E5FF' : '#FF6E40');
         ctx.strokeStyle = pathColor;
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = isPlayerSelected ? 3 : 2.5;
         ctx.setLineDash([5, 4]);
         ctx.beginPath();
         ctx.moveTo(curScreenX, curScreenY);
@@ -479,9 +594,30 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         ctx.fill();
         ctx.restore();
       }
+
+      // If in MOVE mode or player selected, draw an interactive Destination Target Handle ring
+      if (activeTool === 'MOVE' || isPlayerSelected) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(targetScreenX, targetScreenY, dist > 15 ? 7 : 5, 0, Math.PI * 2);
+        ctx.fillStyle = isPlayerSelected ? 'rgba(0, 229, 255, 0.4)' : 'rgba(255, 255, 255, 0.2)';
+        ctx.fill();
+        ctx.strokeStyle = isPlayerSelected ? '#00E5FF' : 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Subtle crosshair center in target handle
+        if (dist > 15) {
+          ctx.beginPath();
+          ctx.arc(targetScreenX, targetScreenY, 2, 0, Math.PI * 2);
+          ctx.fillStyle = isPlayerSelected ? '#00E5FF' : '#FFFFFF';
+          ctx.fill();
+        }
+        ctx.restore();
+      }
     });
 
-    // 5. DRAW ANIMATED PLAYERS - Respecting Layer Isolation
+    // 5. DRAW ANIMATED PLAYERS - Respecting Layer Isolation & Authoritative Edited Model
     currentPhase.players.forEach((currPlayer) => {
       const layer = getLayerForRole(currPlayer.role);
       // Skip player if layer is hidden
@@ -489,12 +625,15 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         return;
       }
 
+      // AUTHORITATIVE PLAYBACK:
+      // Player moves from current phase start (x, y) to current phase target (targetX, targetY)
+      const targetX = currPlayer.targetX ?? currPlayer.x;
+      const targetY = currPlayer.targetY ?? currPlayer.y;
+
+      const interpX = (currPlayer.x + (targetX - currPlayer.x) * animationFraction) * w;
+      const interpY = (currPlayer.y + (targetY - currPlayer.y) * animationFraction) * h;
+
       const nextPlayer = nextPhase?.players?.find((np) => np.id === currPlayer.id) || currPlayer;
-
-      // Smooth coordinate interpolation
-      const interpX = (currPlayer.x + (nextPlayer.x - currPlayer.x) * animationFraction) * w;
-      const interpY = (currPlayer.y + (nextPlayer.y - currPlayer.y) * animationFraction) * h;
-
       const isHighlighted = highlightedPlayerNumber != null && currPlayer.number === highlightedPlayerNumber;
       const isHovered = hoveredPlayerNumber != null && currPlayer.number === hoveredPlayerNumber;
       const isFocused = isHighlighted || isHovered;
@@ -645,18 +784,19 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
       }
     });
 
-    // 6. DRAW ANIMATED BALL (Respect BALL_CORRIDORS layer if present)
+    // 6. DRAW ANIMATED BALL (Respect BALL_CORRIDORS layer if present) - Authoritative Edited Model
     const ballLayer = layers?.BALL_CORRIDORS;
     if (!ballLayer || ballLayer.visible) {
       const ballStart = currentPhase.ball;
-      const ballTarget = nextPhase?.ball || ballStart;
+      const targetBallX = ballStart.targetX ?? ballStart.x;
+      const targetBallY = ballStart.targetY ?? ballStart.y;
 
       // If ball trajectory vector is requested, draw passing trajectory path
       if (ballLayer?.showTrajectories) {
         const bsX = ballStart.x * w;
         const bsY = ballStart.y * h;
-        const btX = (ballTarget.x || ballStart.x) * w;
-        const btY = (ballTarget.y || ballStart.y) * h;
+        const btX = targetBallX * w;
+        const btY = targetBallY * h;
         const bDist = Math.hypot(btX - bsX, btY - bsY);
         if (bDist > 15) {
           ctx.save();
@@ -671,8 +811,8 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         }
       }
 
-      const ballX = (ballStart.x + (ballTarget.x - ballStart.x) * animationFraction) * w;
-      const ballBaseY = (ballStart.y + (ballTarget.y - ballStart.y) * animationFraction) * h;
+      const ballX = (ballStart.x + (targetBallX - ballStart.x) * animationFraction) * w;
+      const ballBaseY = (ballStart.y + (targetBallY - ballStart.y) * animationFraction) * h;
 
       // Aerial arc if AERIAL_PASS
       const arcOffset =
@@ -712,6 +852,31 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
       ctx.arc(ballX, finalBallY, 2.5, 0, Math.PI * 2);
       ctx.fillStyle = '#1E293B';
       ctx.fill();
+
+      // Ball Destination Target Handle (Interactive in Move mode)
+      if (
+        isEditable &&
+        ballStart.targetX != null &&
+        ballStart.targetY != null &&
+        Math.hypot(targetBallX - ballStart.x, targetBallY - ballStart.y) > 0.03
+      ) {
+        const btHandleX = targetBallX * w;
+        const btHandleY = targetBallY * h;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(btHandleX, btHandleY, 9, 0, Math.PI * 2);
+        ctx.strokeStyle = '#FFD600';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 2]);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(btHandleX, btHandleY, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#FFD600';
+        ctx.fill();
+        ctx.restore();
+      }
     }
 
     // 7. DRAW COMPLETED ANNOTATIONS (Telestrator)

@@ -119,6 +119,30 @@ export const DrillDetailsSheet: React.FC<DrillDetailsSheetProps> = ({
             ))}
           </div>
         </div>
+
+        {/* Authoritative Metadata Footer */}
+        <div className="pt-2 border-t border-[#1A2C40] flex items-center justify-between text-[10px] text-gray-400">
+          <div>
+            <span>Author: </span>
+            <span className="text-gray-200 font-semibold">
+              {drill.isSystem
+                ? 'CoachTactics System'
+                : drill.createdByUsername
+                ? `@${drill.createdByUsername} (${drill.createdByRole || 'Coach'})`
+                : 'Authenticated Coach'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {drill.version && (
+              <span className="px-1.5 py-0.5 rounded bg-[#16273B] text-[#00E5FF] font-mono border border-[#00E5FF]/20">
+                v{drill.version}
+              </span>
+            )}
+            {drill.createdAt && (
+              <span>{new Date(drill.createdAt).toLocaleDateString()}</span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

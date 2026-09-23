@@ -72,7 +72,7 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
     setUsername(user.username);
     setName(user.name);
     setEmail(user.email || '');
-    setPassword(user.password || '');
+    setPassword(''); // Leave empty unless resetting password
     setRole(user.role);
     setTeam(user.team || 'Senior Academy');
     setError(null);
@@ -105,14 +105,17 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
       });
       resetForm();
     } else if (editingUserId) {
-      onUpdateUser(editingUserId, {
+      const updates: Partial<UserProfile> = {
         username: cleanUser,
         name: name.trim() || cleanUser,
         email: email.trim(),
-        password: password.trim(),
         role,
         team: team.trim(),
-      });
+      };
+      if (password.trim().length > 0) {
+        updates.password = password.trim();
+      }
+      onUpdateUser(editingUserId, updates);
       resetForm();
     }
   };
@@ -203,15 +206,15 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold text-gray-300 mb-1">
-                    Password
+                    {isCreatingNew ? 'Initial Password' : 'Reset Password (optional)'}
                   </label>
                   <input
                     id="admin-form-password"
-                    type="text"
+                    type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Password"
-                    required
+                    placeholder={isCreatingNew ? 'Initial password (min 6 chars)' : 'Leave empty to keep existing'}
+                    required={isCreatingNew}
                     className="w-full bg-[#162A42] border border-[#243D5B] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00E5FF]"
                   />
                 </div>
@@ -323,7 +326,7 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
                   <th className="p-3">User & Username</th>
                   <th className="p-3">Role</th>
                   <th className="p-3">Email</th>
-                  <th className="p-3">Password</th>
+                  <th className="p-3">Security</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -366,8 +369,8 @@ export const SuperAdminUserManager: React.FC<SuperAdminUserManagerProps> = ({
                         )}
                       </td>
                       <td className="p-3">
-                        <span className="text-gray-400 font-mono text-[11px]">
-                          {u.password ? '••••••' : 'None'}
+                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/20 px-1.5 py-0.5 rounded">
+                          bcrypt hashed
                         </span>
                       </td>
                       <td className="p-3 text-right">

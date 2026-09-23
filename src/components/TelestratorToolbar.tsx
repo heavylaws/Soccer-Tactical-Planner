@@ -13,6 +13,7 @@ import {
   Trash2,
   Flame,
   Layers,
+  HelpCircle,
 } from 'lucide-react';
 import { AnnotationTool } from '../types.ts';
 
@@ -29,6 +30,7 @@ interface TelestratorToolbarProps {
   onToggleDashed: () => void;
   onToggleHeatmap?: () => void;
   onToggleLayers?: () => void;
+  onOpenTutorial?: () => void;
   onUndo: () => void;
   onClearAll: () => void;
 }
@@ -46,19 +48,65 @@ export const TelestratorToolbar: React.FC<TelestratorToolbarProps> = ({
   onToggleDashed,
   onToggleHeatmap,
   onToggleLayers,
+  onOpenTutorial,
   onUndo,
   onClearAll,
 }) => {
   const tools = [
-    { id: 'MOVE' as AnnotationTool, label: 'Move / Reposition', icon: MousePointer },
-    { id: 'PEN' as AnnotationTool, label: 'Tactical Pen', icon: Pen },
-    { id: 'ARROW' as AnnotationTool, label: 'Movement Arrow', icon: MoveRight },
-    { id: 'PASS' as AnnotationTool, label: 'Passing Vector', icon: GitCommit },
-    { id: 'DRIBBLE' as AnnotationTool, label: 'Dribble Path', icon: Activity },
-    { id: 'ZONE' as AnnotationTool, label: 'Pressing Zone', icon: Circle },
-    { id: 'LASER' as AnnotationTool, label: 'Laser Pointer', icon: Zap },
-    { id: 'NOTE' as AnnotationTool, label: 'Sticky Note', icon: StickyNote },
-    { id: 'ERASER' as AnnotationTool, label: 'Eraser', icon: Eraser },
+    {
+      id: 'MOVE' as AnnotationTool,
+      label: 'Move Player',
+      tooltip: 'Move Player & Targets: Drag player marker or destination handle',
+      icon: MousePointer,
+    },
+    {
+      id: 'PEN' as AnnotationTool,
+      label: 'Tactical Pen',
+      tooltip: 'Tactical Pen: Freehand drawing on the pitch',
+      icon: Pen,
+    },
+    {
+      id: 'ARROW' as AnnotationTool,
+      label: 'Arrow',
+      tooltip: 'Movement Arrow: Drag from player to set destination run',
+      icon: MoveRight,
+    },
+    {
+      id: 'PASS' as AnnotationTool,
+      label: 'Pass',
+      tooltip: 'Passing Vector: Drag from ball to set pass corridor',
+      icon: GitCommit,
+    },
+    {
+      id: 'DRIBBLE' as AnnotationTool,
+      label: 'Dribble',
+      tooltip: 'Dribble Path: Squiggly ball carrier line',
+      icon: Activity,
+    },
+    {
+      id: 'ZONE' as AnnotationTool,
+      label: 'Zone',
+      tooltip: 'Pressing Zone: Mark tactical space or pressing trap',
+      icon: Circle,
+    },
+    {
+      id: 'LASER' as AnnotationTool,
+      label: 'Laser',
+      tooltip: 'Laser Pointer: Live pointer without leaving marks',
+      icon: Zap,
+    },
+    {
+      id: 'NOTE' as AnnotationTool,
+      label: 'Note',
+      tooltip: 'Sticky Note: Tap pitch to pin coaching instruction',
+      icon: StickyNote,
+    },
+    {
+      id: 'ERASER' as AnnotationTool,
+      label: 'Eraser',
+      tooltip: 'Eraser: Remove nearby drawings',
+      icon: Eraser,
+    },
   ];
 
   const colors = [
@@ -89,7 +137,7 @@ export const TelestratorToolbar: React.FC<TelestratorToolbarProps> = ({
                   ? 'bg-[#00E5FF] text-[#0A131F] shadow-[0_0_12px_rgba(0,229,255,0.4)]'
                   : 'bg-[#142337] text-gray-300 hover:text-white hover:bg-[#1B2F48]'
               }`}
-              title={t.label}
+              title={t.tooltip || t.label}
             >
               <Icon className="w-4 h-4" />
               <span className="hidden md:inline text-[11px]">{t.label}</span>
@@ -129,6 +177,19 @@ export const TelestratorToolbar: React.FC<TelestratorToolbarProps> = ({
           <Flame className={`w-4 h-4 ${showHeatmap ? 'text-[#FFD54F]' : 'text-orange-400'}`} />
           <span className="text-[11px] font-bold">Heatmap</span>
         </button>
+
+        {/* Coach Plan Editor Tutorial / Help Guide CTA */}
+        {onOpenTutorial && (
+          <button
+            id="telestrator-btn-coach-guide"
+            onClick={onOpenTutorial}
+            className="px-2.5 py-1.5 rounded-lg bg-[#142337] hover:bg-[#1C324E] text-[#00E5FF] hover:text-white border border-[#00E5FF]/40 transition-all flex items-center gap-1.5 text-xs font-semibold shadow-sm"
+            title="Coach Guide: How to manually create, edit, pass, and choreograph drills"
+          >
+            <HelpCircle className="w-4 h-4 text-[#00E5FF]" />
+            <span className="text-[11px] font-bold hidden sm:inline">Coach Guide</span>
+          </button>
+        )}
 
         {/* Color swatches */}
         <div className="flex items-center gap-1 bg-[#142337] p-1 rounded-lg border border-[#21354D]">

@@ -88,11 +88,17 @@ export interface SoccerDrill {
   description: string;
   coachingCues: string[];
   phases: DrillPhase[];
-  createdByRole?: UserRole;
+  createdBy?: string;
+  createdByRole?: UserRole | string;
   createdByUsername?: string;
   ownerId?: string;
+  createdAt?: string;
+  updatedBy?: string;
+  updatedAt?: string;
+  version?: number;
+  isSystem?: boolean;
   isCached?: boolean;
-  cacheSource?: 'client' | 'server-memory' | 'uefa-offline' | 'gemini-fresh';
+  cacheSource?: 'client' | 'server-memory' | 'uefa-offline' | 'gemini-fresh' | 'coachtactics-offline';
   quotaSaved?: boolean;
 }
 

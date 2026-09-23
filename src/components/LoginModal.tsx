@@ -1,45 +1,62 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types.ts';
-import { Lock, User, ArrowRight, ShieldCheck, Sparkles, AlertCircle } from 'lucide-react';
+import { Lock, User, ArrowRight, ShieldCheck, Sparkles, AlertCircle, Loader2 } from 'lucide-react';
 
 interface LoginModalProps {
   isOpen: boolean;
-  users: UserProfile[];
-  onLoginSuccess: (user: UserProfile) => void;
+  users?: UserProfile[];
+  onLoginSuccess: (user: UserProfile, token?: string) => void;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
   isOpen,
-  users,
   onLoginSuccess,
 }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    const cleanUser = username.trim().toLowerCase();
-    const targetUser = users.find(
-      (u) => (u.username || '').toLowerCase() === cleanUser
-    );
-
-    if (!targetUser) {
-      setError('Invalid username or account not found.');
+    const cleanUser = username.trim();
+    if (!cleanUser || !password) {
+      setError('Username and password are required.');
       return;
     }
 
-    if (targetUser.password && targetUser.password !== password) {
-      setError('Incorrect password. Please verify credentials.');
-      return;
-    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          username: cleanUser,
+          password,
+        }),
+      });
 
-    // Success
-    onLoginSuccess(targetUser);
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setError(data.error || 'Invalid credentials. Please verify username and password.');
+        return;
+      }
+
+      // Successful server-side authentication
+      onLoginSuccess(data.user, data.token);
+    } catch {
+      setError('Unable to reach authentication server. Please check your connection.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleQuickFill = (user: string, pass: string) => {
@@ -94,8 +111,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="e.g. heavylaws or c00ldude"
+                disabled={loading}
                 required
-                className="w-full bg-[#132338] border border-[#223953] focus:border-[#00E5FF] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none transition-colors"
+                className="w-full bg-[#132338] border border-[#223953] focus:border-[#00E5FF] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none transition-colors disabled:opacity-50"
               />
             </div>
           </div>
@@ -112,8 +130,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
+                disabled={loading}
                 required
-                className="w-full bg-[#132338] border border-[#223953] focus:border-[#00E5FF] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none transition-colors"
+                className="w-full bg-[#132338] border border-[#223953] focus:border-[#00E5FF] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none transition-colors disabled:opacity-50"
               />
             </div>
           </div>
@@ -121,10 +140,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           <button
             id="login-submit-btn"
             type="submit"
-            className="w-full mt-2 py-3 px-4 bg-[#00E5FF] hover:bg-[#18FFFF] text-[#08121E] font-bold text-sm rounded-xl shadow-[0_0_16px_rgba(0,229,255,0.35)] transition-all flex items-center justify-center gap-2"
+            disabled={loading}
+            className="w-full mt-2 py-3 px-4 bg-[#00E5FF] hover:bg-[#18FFFF] text-[#08121E] font-bold text-sm rounded-xl shadow-[0_0_16px_rgba(0,229,255,0.35)] transition-all flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed"
           >
-            <span>Sign In to Tactics</span>
-            <ArrowRight className="w-4 h-4" />
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Authenticating...</span>
+              </>
+            ) : (
+              <>
+                <span>Sign In to Tactics</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
           </button>
         </form>
 

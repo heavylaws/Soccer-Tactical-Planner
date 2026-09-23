@@ -1,79 +1,64 @@
 import { SoccerDrill } from '../types';
+import {
+  generateCacheFingerprint,
+  CACHE_VERSION,
+} from './cacheFingerprint';
 
-const CLIENT_CACHE_KEY = 'coach_tactics_drill_cache_v1';
+const CLIENT_CACHE_KEY = `coach_tactics_drill_cache_${CACHE_VERSION}`;
 const QUOTA_STATS_KEY = 'coach_tactics_quota_stats_v1';
 
-// Common stop words to strip when building canonical prompt fingerprints
-const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'with', 'from',
-  'drill', 'drills', 'exercise', 'training', 'practice', 'session', 'plan',
-  'tactical', 'tactics', 'animated', 'animation', 'please', 'generate', 'create',
-  'make', 'build', 'show', 'soccer', 'football', 'coach'
-]);
-
-/**
- * Normalizes a prompt into a deterministic tactical key
- */
-export function normalizeTacticalPrompt(
-  prompt: string,
-  formation = '',
-  focusArea = ''
-): string {
-  const combined = `${prompt} ${formation} ${focusArea}`.toLowerCase();
-  const tokens = combined
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length > 1 && !STOP_WORDS.has(w))
-    .sort();
-
-  return tokens.join('_') || 'tactical_general_drill';
-}
-
 interface StoredCacheItem {
-  key: string;
+  fingerprint: string;
   drill: SoccerDrill;
   timestamp: number;
 }
 
+/**
+ * Normalizes prompt parameters into the deterministic cache fingerprint
+ */
+export function getFingerprintForRequest(
+  prompt: string,
+  formation = '',
+  focusArea = '',
+  pitchView = 'FULL',
+  ecoMode = false
+): string {
+  return generateCacheFingerprint({
+    prompt,
+    formation,
+    focusArea,
+    pitchView,
+    ecoMode,
+  });
+}
+
+/**
+ * Retrieves a cached drill from client localStorage using EXACT deterministic fingerprint matching.
+ * Token overlap and fuzzy matching have been completely eliminated.
+ */
 export function getClientCachedDrill(
   prompt: string,
   formation = '',
-  focusArea = ''
+  focusArea = '',
+  pitchView = 'FULL',
+  ecoMode = false
 ): SoccerDrill | null {
   try {
     const raw = localStorage.getItem(CLIENT_CACHE_KEY);
     if (!raw) return null;
 
     const cache: Record<string, StoredCacheItem> = JSON.parse(raw);
-    const key = normalizeTacticalPrompt(prompt, formation, focusArea);
+    const fingerprint = getFingerprintForRequest(prompt, formation, focusArea, pitchView, ecoMode);
 
-    if (cache[key]) {
+    const match = cache[fingerprint];
+    if (match && match.drill && Array.isArray(match.drill.phases) && match.drill.phases.length > 0) {
       incrementQuotaStat('clientHits');
       return {
-        ...cache[key].drill,
+        ...match.drill,
         isCached: true,
         cacheSource: 'client',
         quotaSaved: true,
       };
-    }
-
-    // Try token overlap match (if at least 80% of keywords match)
-    const incomingTokens = key.split('_').filter(Boolean);
-    if (incomingTokens.length >= 3) {
-      for (const [k, item] of Object.entries(cache)) {
-        const cachedTokens = k.split('_').filter(Boolean);
-        const matchCount = incomingTokens.filter((t) => cachedTokens.includes(t)).length;
-        const ratio = matchCount / incomingTokens.length;
-        if (ratio >= 0.8) {
-          incrementQuotaStat('clientHits');
-          return {
-            ...item.drill,
-            isCached: true,
-            cacheSource: 'client',
-            quotaSaved: true,
-          };
-        }
-      }
     }
 
     return null;
@@ -83,19 +68,24 @@ export function getClientCachedDrill(
   }
 }
 
+/**
+ * Saves a validated newly-generated drill into client storage keyed by exact deterministic fingerprint.
+ */
 export function saveDrillToClientCache(
   prompt: string,
   drill: SoccerDrill,
   formation = '',
-  focusArea = ''
+  focusArea = '',
+  pitchView = 'FULL',
+  ecoMode = false
 ): void {
   try {
     const raw = localStorage.getItem(CLIENT_CACHE_KEY);
     const cache: Record<string, StoredCacheItem> = raw ? JSON.parse(raw) : {};
 
-    const key = normalizeTacticalPrompt(prompt, formation, focusArea);
-    cache[key] = {
-      key,
+    const fingerprint = getFingerprintForRequest(prompt, formation, focusArea, pitchView, ecoMode);
+    cache[fingerprint] = {
+      fingerprint,
       drill: {
         ...drill,
         isCached: true,
@@ -161,6 +151,8 @@ export function incrementQuotaStat(stat: 'clientHits' | 'serverHits' | 'apiCalls
 export function clearClientCache(): void {
   try {
     localStorage.removeItem(CLIENT_CACHE_KEY);
+    // Also clean up any legacy v1 cache if present
+    localStorage.removeItem('coach_tactics_drill_cache_v1');
   } catch {
     // ignore
   }

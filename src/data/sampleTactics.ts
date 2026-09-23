@@ -9,7 +9,6 @@ export const DEFAULT_USERS: UserProfile[] = [
     role: 'SUPER_ADMIN',
     team: 'Master Tactical HQ',
     avatarColor: '#00E5FF',
-    password: 'A!t3r3g0',
     needsEmailSetup: true,
   },
   {
@@ -20,7 +19,6 @@ export const DEFAULT_USERS: UserProfile[] = [
     role: 'CLIENT',
     team: 'Client Academy',
     avatarColor: '#FFD600',
-    password: '123456',
     needsEmailSetup: true,
   },
   {
@@ -31,7 +29,6 @@ export const DEFAULT_USERS: UserProfile[] = [
     role: 'HEAD_COACH',
     team: 'Elite FC First Squad',
     avatarColor: '#00E676',
-    password: 'coach123',
     needsEmailSetup: false,
   },
   {
@@ -42,7 +39,6 @@ export const DEFAULT_USERS: UserProfile[] = [
     role: 'PLAYER',
     team: 'Elite FC First Squad',
     avatarColor: '#FF6E40',
-    password: 'player123',
     needsEmailSetup: false,
   },
 ];

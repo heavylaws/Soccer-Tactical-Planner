@@ -11,6 +11,8 @@ import {
   Tv,
   Gauge,
   Sliders,
+  Save,
+  HelpCircle,
 } from 'lucide-react';
 import { DrillPhase } from '../types.ts';
 
@@ -23,6 +25,9 @@ interface TimelinePlayerControlsProps {
   pitchView: 'FULL' | 'HALF';
   isFullscreen: boolean;
   phaseSpeeds?: Record<number, number>;
+  onSavePlan?: () => void;
+  isSaving?: boolean;
+  onOpenTutorial?: () => void;
   onTogglePlay: () => void;
   onSelectPhase: (index: number) => void;
   onPreviousPhase: () => void;
@@ -44,6 +49,9 @@ export const TimelinePlayerControls: React.FC<TimelinePlayerControlsProps> = ({
   pitchView,
   isFullscreen,
   phaseSpeeds = {},
+  onSavePlan,
+  isSaving = false,
+  onOpenTutorial,
   onTogglePlay,
   onSelectPhase,
   onPreviousPhase,
@@ -133,6 +141,30 @@ export const TimelinePlayerControls: React.FC<TimelinePlayerControlsProps> = ({
             <Tv className="w-3.5 h-3.5" />
             <span>{pitchView === 'HALF' ? 'Half Pitch' : 'Full Pitch'}</span>
           </button>
+
+          {onSavePlan && (
+            <button
+              id="timeline-btn-save-plan"
+              onClick={onSavePlan}
+              disabled={isSaving}
+              className="px-2.5 py-1 text-xs font-semibold bg-[#142336] hover:bg-[#1E3550] text-[#00E5FF] hover:text-white border border-[#233B56] hover:border-[#00E5FF]/60 rounded-lg transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+              title="Save current edited tactical plan to server playbook"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{isSaving ? 'Saving...' : 'Save Plan'}</span>
+            </button>
+          )}
+
+          {onOpenTutorial && (
+            <button
+              id="timeline-btn-open-tutorial"
+              onClick={onOpenTutorial}
+              className="p-1.5 bg-[#142336] hover:bg-[#1E3550] text-gray-300 hover:text-[#00E5FF] border border-[#233B56] rounded-lg transition-colors"
+              title="Plan Editor Coach Guide / Tutorial"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

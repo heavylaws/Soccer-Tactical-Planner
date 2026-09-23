@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SoccerDrill } from '../types.ts';
+import { SoccerDrill, UserProfile } from '../types.ts';
 import {
   BookOpen,
   Plus,
@@ -9,6 +9,7 @@ import {
   Sparkles,
   X,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 
 interface PlaybookDrawerProps {
@@ -16,8 +17,10 @@ interface PlaybookDrawerProps {
   onClose: () => void;
   drills: SoccerDrill[];
   activeDrillId: string;
+  currentUser?: UserProfile | null;
   onSelectDrill: (drill: SoccerDrill) => void;
   onOpenVoicePrompt: () => void;
+  onDeleteDrill?: (drillId: string) => void;
 }
 
 export const PlaybookDrawer: React.FC<PlaybookDrawerProps> = ({
@@ -25,8 +28,10 @@ export const PlaybookDrawer: React.FC<PlaybookDrawerProps> = ({
   onClose,
   drills,
   activeDrillId,
+  currentUser,
   onSelectDrill,
   onOpenVoicePrompt,
+  onDeleteDrill,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
@@ -144,9 +149,20 @@ export const PlaybookDrawer: React.FC<PlaybookDrawerProps> = ({
                   <span className="text-[10px] font-bold text-[#00E5FF] uppercase tracking-wider">
                     {d.category}
                   </span>
-                  <span className="text-[10px] text-gray-400 font-mono">
-                    {d.pitchView} PITCH
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {d.isSystem ? (
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                        SYSTEM
+                      </span>
+                    ) : (
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#00E5FF]/20 text-[#00E5FF] font-semibold border border-[#00E5FF]/30">
+                        {d.createdByUsername ? `@${d.createdByUsername}` : 'CUSTOM'}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-400 font-mono">
+                      {d.pitchView} PITCH
+                    </span>
+                  </div>
                 </div>
 
                 <h4 className="text-xs font-bold text-white leading-snug">
@@ -169,12 +185,27 @@ export const PlaybookDrawer: React.FC<PlaybookDrawerProps> = ({
                     </span>
                   </div>
 
-                  {isSelected && (
-                    <span className="text-[#00E5FF] font-bold flex items-center gap-0.5">
-                      <Play className="w-2.5 h-2.5 fill-current" />
-                      Active
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {isSelected && (
+                      <span className="text-[#00E5FF] font-bold flex items-center gap-0.5">
+                        <Play className="w-2.5 h-2.5 fill-current" />
+                        Active
+                      </span>
+                    )}
+                    {onDeleteDrill && !d.isSystem && (currentUser?.role === 'SUPER_ADMIN' || d.createdBy === currentUser?.id || d.ownerId === currentUser?.id || d.ownerId === currentUser?.username) && (
+                      <button
+                        id={`delete-drill-btn-${d.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteDrill(d.id);
+                        }}
+                        title="Delete Drill"
+                        className="p-1 rounded text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
