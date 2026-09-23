@@ -1,0 +1,32 @@
+# CoachTactics — self-hosted deployment.
+# Put a TLS reverse proxy (Caddy/Nginx/Traefik) in front; the app only listens on localhost.
+services:
+  coachtactics:
+    build: .
+    image: coachtactics:2.1.0
+    container_name: coachtactics
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      # Reachable only via the local reverse proxy (see ports), so trusting one hop is safe.
+      TRUST_PROXY: "1"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - coachtactics-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  coachtactics-data:

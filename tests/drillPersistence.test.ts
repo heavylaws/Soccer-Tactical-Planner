@@ -27,7 +27,7 @@ async function runTests() {
 
   const coachPep: SafeUser = {
     id: 'coach_pep',
-    username: 'pepguardiola',
+    username: 'head_coach_test',
     name: 'Coach Pep',
     role: 'HEAD_COACH',
     team: 'Elite FC',
@@ -49,7 +49,7 @@ async function runTests() {
 
   const clientUser: SafeUser = {
     id: 'user_client_42',
-    username: 'c00ldude',
+    username: 'client_test',
     name: 'Cool Dude',
     role: 'CLIENT',
     team: 'Academy Client',

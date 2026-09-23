@@ -56,8 +56,8 @@ async function runTests() {
 
   const headCoach: SafeUser = {
     id: 'coach_pep_01',
-    username: 'pepguardiola',
-    name: 'Pep Guardiola',
+    username: 'head_coach_test',
+    name: 'Head Coach (Test)',
     role: 'HEAD_COACH',
     team: 'Manchester City',
     avatarColor: '#00E676',
