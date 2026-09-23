@@ -42,6 +42,8 @@ interface TacticalPitchViewProps {
   onLaserMoved: (normX: number, normY: number) => void;
   onPitchTapForNote: (normX: number, normY: number) => void;
   onDeleteNote?: (noteId: string) => void;
+  /** Called when the user starts dragging a player or the ball (e.g. to pause playback). */
+  onInteractionStart?: () => void;
 }
 
 export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
@@ -72,9 +74,21 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
   onLaserMoved,
   onPitchTapForNote,
   onDeleteNote,
+  onInteractionStart,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Bumped by ResizeObserver so the canvas redraws at the right size when paused
+  // (tablet rotation, fullscreen toggle) instead of staying stretched.
+  const [resizeTick, setResizeTick] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setResizeTick((t) => t + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
   const [draggingTargetPlayerId, setDraggingTargetPlayerId] = useState<string | null>(null);
@@ -87,20 +101,38 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
 
   const isHalfPitch = drill.pitchView === 'HALF';
 
-  // Get normalized coordinates from mouse/touch event
-  const getNormalizedCoords = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): AnnotationPoint => {
+  // Normalized pitch coordinates from a pointer event (mouse, touch and pen share one code path)
+  const getNormalizedCoords = (e: { clientX: number; clientY: number }): AnnotationPoint => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0.5, y: 0.5 };
     const rect = canvas.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    if (rect.width === 0 || rect.height === 0) return { x: 0.5, y: 0.5 };
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
     return { x, y };
   };
 
-  // Handle pointer down / touch start
-  const handlePointerDown = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  // Distance to a moving object: nearest of its start position and where it is drawn right now.
+  const distToMoving = (
+    obj: { x: number; y: number; targetX?: number; targetY?: number },
+    px: number,
+    py: number
+  ) => {
+    const tx = obj.targetX ?? obj.x;
+    const ty = obj.targetY ?? obj.y;
+    const ix = obj.x + (tx - obj.x) * animationFraction;
+    const iy = obj.y + (ty - obj.y) * animationFraction;
+    return Math.min(Math.hypot(obj.x - px, obj.y - py), Math.hypot(ix - px, iy - py));
+  };
+
+  // Handle pointer down
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!e.isPrimary) return; // ignore second finger of a pinch
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId); // keep receiving moves/up even outside the canvas
+    } catch {
+      /* not supported */
+    }
     const { x, y } = getNormalizedCoords(e);
 
     if (activeTool === 'MOVE') {
@@ -112,6 +144,7 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         return Math.hypot(tx - x, ty - y) < 0.06;
       });
       if (clickedTargetPlayer) {
+        onInteractionStart?.();
         setDraggingTargetPlayerId(clickedTargetPlayer.id);
         onPlayerSelected(clickedTargetPlayer);
         return;
@@ -122,23 +155,31 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         const btx = currentPhase.ball.targetX;
         const bty = currentPhase.ball.targetY;
         if (Math.hypot(btx - x, bty - y) < 0.06) {
+          onInteractionStart?.();
           setDraggingBallTarget(true);
           return;
         }
       }
 
-      // 3. Check if clicking near ball marker
-      if (Math.hypot(currentPhase.ball.x - x, currentPhase.ball.y - y) < 0.06) {
+      // 3. Check if clicking near ball marker (where it is drawn, not only where it started)
+      if (distToMoving(currentPhase.ball, x, y) < 0.06) {
+        onInteractionStart?.();
         setDraggingBall(true);
         return;
       }
 
-      // 4. Check if clicking near any player marker body
-      const clickedPlayer = currentPhase.players.find((p) => {
-        const d = Math.hypot(p.x - x, p.y - y);
-        return d < 0.08;
-      });
+      // 4. Check if clicking near any player marker body (nearest wins)
+      let clickedPlayer: TacticalPlayer | null = null;
+      let best = 0.08;
+      for (const p of currentPhase.players) {
+        const d = distToMoving(p, x, y);
+        if (d < best) {
+          best = d;
+          clickedPlayer = p;
+        }
+      }
       if (clickedPlayer) {
+        onInteractionStart?.();
         setDraggingPlayerId(clickedPlayer.id);
         onPlayerSelected(clickedPlayer);
       }
@@ -156,7 +197,8 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
     }
   };
 
-  const handlePointerMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!e.isPrimary) return;
     const { x, y } = getNormalizedCoords(e);
 
     // Detect hovered player for tactical role tooltips and highlights (using authoritative target interpolation)
@@ -205,7 +247,7 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
       setDraftEnd({ x, y });
     } else if (activeTool === 'LASER') {
       onLaserMoved(x, y);
-    } else if (activeTool === 'ERASER' && ('buttons' in e ? e.buttons === 1 : true)) {
+    } else if (activeTool === 'ERASER' && (e.buttons & 1) === 1) {
       onEraseNear(x, y);
     }
   };
@@ -215,7 +257,26 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
     onPlayerHovered?.(null);
   };
 
-  const handlePointerUp = () => {
+  // Pointer cancelled by the browser (e.g. system gesture): drop any in-progress drag or draft.
+  const handlePointerCancel = () => {
+    setDraggingPlayerId(null);
+    setDraggingTargetPlayerId(null);
+    setDraggingBall(false);
+    setDraggingBallTarget(false);
+    setDraftPoints([]);
+    setDraftStart(null);
+    setDraftEnd(null);
+  };
+
+  const handlePointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e) {
+      if (!e.isPrimary) return;
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* not supported */
+      }
+    }
     if (activeTool === 'MOVE') {
       setDraggingPlayerId(null);
       setDraggingTargetPlayerId(null);
@@ -1048,6 +1109,7 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
     drill.phases,
     layers,
     hoveredPlayerNumber,
+    resizeTick,
   ]);
 
   return (
@@ -1062,13 +1124,11 @@ export const TacticalPitchView: React.FC<TacticalPitchViewProps> = ({
         ref={canvasRef}
         id="tactical-pitch-canvas"
         className="w-full h-full cursor-crosshair touch-none"
-        onMouseDown={handlePointerDown}
-        onMouseMove={handlePointerMove}
-        onMouseUp={handlePointerUp}
-        onMouseLeave={handlePointerLeave}
-        onTouchStart={handlePointerDown}
-        onTouchMove={handlePointerMove}
-        onTouchEnd={handlePointerUp}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onPointerLeave={handlePointerLeave}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic,
   MicOff,
@@ -45,6 +45,14 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
   const [formation, setFormation] = useState('4-3-3');
   const [focusArea, setFocusArea] = useState('Wide Overload & Penetration');
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [speechLang, setSpeechLang] = useState<string>(() => {
+    const nav = typeof navigator !== 'undefined' ? navigator.language || '' : '';
+    if (nav.toLowerCase().startsWith('ar')) return 'ar-QA';
+    if (nav.toLowerCase().startsWith('fr')) return 'fr-FR';
+    return 'en-US';
+  });
+  const recognitionRef = useRef<any>(null);
   const [ecoMode, setEcoMode] = useState(true);
   const [forceRefresh, setForceRefresh] = useState(false);
   const [quotaStats, setQuotaStats] = useState<QuotaStats>({
@@ -164,43 +172,83 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
     }
   }, []);
 
+  const stopRecognition = () => {
+    const rec = recognitionRef.current;
+    recognitionRef.current = null;
+    if (rec) {
+      rec.onresult = null;
+      rec.onerror = null;
+      rec.onend = null;
+      try {
+        rec.abort();
+      } catch {
+        /* already stopped */
+      }
+    }
+    setIsRecording(false);
+  };
+
+  // Release the microphone when the sheet closes or unmounts.
+  useEffect(() => {
+    if (!isOpen) stopRecognition();
+    return () => stopRecognition();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   const handleToggleRecord = () => {
+    setSpeechError(null);
+
     if (isRecording) {
-      setIsRecording(false);
+      // Graceful stop: keeps what was already recognised.
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        stopRecognition();
+      }
       return;
     }
 
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRec) {
-      try {
-        const recognition = new SpeechRec();
-        recognition.continuous = false;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
+    if (!SpeechRec) {
+      setSpeechError("Voice input isn't supported in this browser. Use Chrome, Edge or Safari, or type the drill below.");
+      return;
+    }
 
-        recognition.onstart = () => setIsRecording(true);
-        recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
-            .map((result: any) => result[0].transcript)
-            .join('');
-          setPrompt(transcript);
-        };
-        recognition.onerror = () => setIsRecording(false);
-        recognition.onend = () => setIsRecording(false);
-        recognition.start();
-      } catch (err) {
-        console.error('Speech recognition failed to start', err);
-        setIsRecording(false);
-      }
-    } else {
-      // Fallback simulated recording animation for devices without mic permission
-      setIsRecording(true);
-      setTimeout(() => {
-        setIsRecording(false);
-        if (!prompt) {
-          setPrompt('3-phase high pressing drill trapping opponent holding pivot with rapid vertical counter');
+    try {
+      const recognition = new SpeechRec();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = speechLang;
+
+      recognition.onstart = () => setIsRecording(true);
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results)
+          .map((result: any) => result[0].transcript)
+          .join('');
+        setPrompt(transcript);
+      };
+      recognition.onerror = (event: any) => {
+        const code = event?.error;
+        if (code === 'not-allowed' || code === 'service-not-allowed') {
+          setSpeechError('Microphone access was blocked. Allow it in your browser settings, or type the drill below.');
+        } else if (code === 'no-speech') {
+          setSpeechError('No speech detected. Tap the mic and try again.');
+        } else if (code && code !== 'aborted') {
+          setSpeechError('Voice input stopped unexpectedly. Try again or type the drill below.');
         }
-      }, 3500);
+        setIsRecording(false);
+      };
+      recognition.onend = () => {
+        recognitionRef.current = null;
+        setIsRecording(false);
+      };
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Speech recognition failed to start', err);
+      recognitionRef.current = null;
+      setIsRecording(false);
+      setSpeechError('Voice input could not start. Type the drill below instead.');
     }
   };
 
@@ -258,6 +306,8 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
             id="voice-prompt-mic-record-btn"
             type="button"
             onClick={handleToggleRecord}
+            aria-label={isRecording ? 'Stop voice input' : 'Start voice input'}
+            aria-pressed={isRecording}
             className={`w-16 h-16 rounded-full flex items-center justify-center transition-all shadow-lg ${
               isRecording
                 ? 'bg-[#FF1744] text-white scale-110 shadow-[0_0_24px_rgba(255,23,68,0.6)] animate-pulse'
@@ -268,8 +318,36 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
           </button>
 
           <p className="mt-2 text-xs font-semibold text-gray-300">
-            {isRecording ? 'Listening to Coach Tactical Instructions...' : 'Tap Mic to Speak or Type Below'}
+            {isRecording ? 'Listening… tap again to stop' : speechSupported ? 'Tap the mic to speak, or type below' : 'Type the drill below'}
           </p>
+
+          <div className="mt-2 flex items-center gap-1" role="radiogroup" aria-label="Voice input language">
+            {[
+              { code: 'en-US', label: 'English' },
+              { code: 'ar-QA', label: 'العربية' },
+              { code: 'fr-FR', label: 'Français' },
+            ].map((opt) => (
+              <button
+                key={opt.code}
+                type="button"
+                role="radio"
+                aria-checked={speechLang === opt.code}
+                disabled={isRecording}
+                onClick={() => setSpeechLang(opt.code)}
+                className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                  speechLang === opt.code ? 'bg-[#00E5FF]/20 text-[#00E5FF]' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {speechError && (
+            <p role="alert" className="mt-2 px-3 text-[11px] text-[#FF8A80] text-center">
+              {speechError}
+            </p>
+          )}
 
           {/* Dynamic Waveform Visualizer */}
           {isRecording && (
@@ -296,6 +374,8 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
           </label>
           <textarea
             id="voice-prompt-textarea"
+            dir="auto"
+            maxLength={1000}
             rows={3}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}

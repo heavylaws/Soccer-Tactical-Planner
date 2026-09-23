@@ -27,7 +27,7 @@ import {
   TacticalLayerConfig,
   TacticalLayerType,
 } from './types.ts';
-import { DEFAULT_TACTICAL_DRILLS, DEFAULT_USERS } from './data/sampleTactics.ts';
+import { DEFAULT_TACTICAL_DRILLS } from './data/sampleTactics.ts';
 import { TacticalPitchView } from './components/TacticalPitchView.tsx';
 import { TimelinePlayerControls } from './components/TimelinePlayerControls.tsx';
 import { TelestratorToolbar } from './components/TelestratorToolbar.tsx';
@@ -51,28 +51,41 @@ import {
   saveDrillToClientCache,
   getQuotaStats,
   incrementQuotaStat,
+  clearClientCache,
 } from './utils/drillCache.ts';
+import { loadSessionToken, saveSessionToken } from './utils/sessionToken.ts';
 import { LogOut, UserCog, Zap, ShieldCheck } from 'lucide-react';
 
 export default function App() {
   // Registered users directory (synced from server for SUPER_ADMIN)
-  const [users, setUsers] = useState<UserProfile[]>(DEFAULT_USERS);
+  const [users, setUsers] = useState<UserProfile[]>([]);
 
   // Authenticated server identity
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(null);
+  // Bearer token: kept in memory; persisted to sessionStorage only when embedded (AI Studio preview)
+  const [authToken, setAuthToken] = useState<string | null>(() => loadSessionToken());
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+
+  useEffect(() => {
+    saveSessionToken(authToken);
+  }, [authToken]);
 
   // Verify server-side session on mount
   useEffect(() => {
     let isMounted = true;
-    fetch('/api/auth/me', { credentials: 'include' })
+    const initialToken = loadSessionToken();
+    fetch('/api/auth/me', {
+      credentials: 'include',
+      headers: initialToken ? { Authorization: `Bearer ${initialToken}` } : {},
+    })
       .then(async (res) => {
         if (res.ok) {
           const data = await res.json();
           if (isMounted && data.user) {
             setCurrentUser(data.user);
           }
+        } else if (res.status === 401 && isMounted) {
+          setAuthToken(null);
         }
       })
       .catch(() => {
@@ -372,35 +385,56 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // Refs mirror playback state so the rAF loop never has to call setState inside another
+  // setState updater (StrictMode runs updaters twice in dev, which skipped phases in the preview).
+  const fractionRef = useRef(0);
+  const phaseIndexRef = useRef(0);
+  useEffect(() => {
+    fractionRef.current = animationFraction;
+  }, [animationFraction]);
+  useEffect(() => {
+    phaseIndexRef.current = currentPhaseIndex;
+  }, [currentPhaseIndex]);
+
   // 60FPS Animation Loop
+  const phases = activeDrill?.phases;
   useEffect(() => {
     let active = true;
 
     const animate = (now: number) => {
       if (!active) return;
 
-      const deltaMs = now - lastTimeRef.current;
+      // Clamp so returning to a background tab doesn't jump several phases at once.
+      const deltaMs = Math.min(100, now - lastTimeRef.current);
       lastTimeRef.current = now;
 
-      if (isPlaying && currentPhase && activeDrill?.phases?.length) {
-        const phaseMultiplier = phaseSpeeds[currentPhaseIndex] ?? 1.0;
-        const effectiveSpeed = speed * phaseMultiplier;
-        const phaseDurationMs = (currentPhase.durationSec || 3.0) * 1000;
-        const progressIncrement = (deltaMs * effectiveSpeed) / phaseDurationMs;
+      if (isPlaying && phases && phases.length > 0) {
+        const idx = phaseIndexRef.current < phases.length ? phaseIndexRef.current : 0;
+        const phase = phases[idx];
+        const effectiveSpeed = speed * (phaseSpeeds[idx] ?? 1.0);
+        const phaseDurationMs = (phase?.durationSec || 3.0) * 1000;
+        const next = fractionRef.current + (deltaMs * effectiveSpeed) / phaseDurationMs;
 
-        setAnimationFraction((prev) => {
-          const nextVal = prev + progressIncrement;
-          if (nextVal >= 1.0) {
-            // Move to next phase seamlessly
-            setCurrentPhaseIndex((prevIdx) => (prevIdx + 1) % activeDrill.phases.length);
-            return 0;
-          }
-          return nextVal;
-        });
+        if (next >= 1.0) {
+          const nextIdx = (idx + 1) % phases.length;
+          phaseIndexRef.current = nextIdx;
+          fractionRef.current = 0;
+          setCurrentPhaseIndex(nextIdx);
+          setAnimationFraction(0);
+        } else {
+          fractionRef.current = next;
+          setAnimationFraction(next);
+        }
       }
 
-      // Cleanup aged laser beam dots
-      setLaserPoints((prev) => prev.filter((lp) => now - lp.timestamp < 1000));
+      // Expire laser dots. Timestamps are Date.now() (the old code compared them against
+      // performance.now(), so dots never expired). Returning prev skips a re-render when idle.
+      setLaserPoints((prev) => {
+        if (prev.length === 0) return prev;
+        const cutoff = Date.now() - 1000;
+        const kept = prev.filter((lp) => lp.timestamp >= cutoff);
+        return kept.length === prev.length ? prev : kept;
+      });
 
       animFrameRef.current = requestAnimationFrame(animate);
     };
@@ -412,7 +446,7 @@ export default function App() {
       active = false;
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [isPlaying, currentPhase, currentPhaseIndex, speed, phaseSpeeds, activeDrill?.phases?.length]);
+  }, [isPlaying, speed, phaseSpeeds, phases]);
 
   // Select Drill and restart animation
   const handleSelectDrill = useCallback((drill: SoccerDrill) => {
@@ -633,7 +667,37 @@ export default function App() {
     showToast(`Assigned Tactical Role: "${role}" to #${targetNumber}`);
   };
 
-  // AI Prompt Drill Generation (Cache-First Quota-Preserving Architecture)
+  // Save a newly generated drill to the server playbook. Returns the stored drill, or null on failure.
+  const persistGeneratedDrill = async (drill: SoccerDrill): Promise<SoccerDrill | null> => {
+    try {
+      const saveRes = await fetch('/api/drills', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify(drill),
+      });
+      const saveData = await saveRes.json().catch(() => ({}));
+      if (saveRes.ok && saveData.success && saveData.drill) return saveData.drill as SoccerDrill;
+      if (saveData.error) showToast(saveData.error);
+    } catch (saveErr) {
+      console.error('Failed to persist drill to server repository:', saveErr);
+    }
+    return null;
+  };
+
+  const activateNewDrill = (drill: SoccerDrill) => {
+    setDrills((prev) => [drill, ...prev.filter((d) => d.id !== drill.id)]);
+    setActiveDrill(drill);
+    setCurrentPhaseIndex(0);
+    setAnimationFraction(0);
+    setIsPlaying(true);
+    setIsVoicePromptOpen(false);
+  };
+
+  // AI Prompt Drill Generation (cache-first, quota-preserving)
   const handleGenerateDrill = async (
     prompt: string,
     formation: string,
@@ -641,41 +705,26 @@ export default function App() {
     forceRefresh = false,
     ecoMode = false
   ) => {
+    if (!currentUser) return;
     setIsGenerating(true);
+    const pitchView = activeDrill?.pitchView || 'FULL';
     try {
-      // Level 1: Client-Side Instant Cache Check (0ms latency, 0 network requests, 0 API quota)
+      // Level 1: this user's local cache (no network, no quota)
       if (!forceRefresh) {
-        const localCached = getClientCachedDrill(
-          prompt,
-          formation,
-          focusArea,
-          activeDrill?.pitchView || 'FULL',
-          ecoMode
-        );
+        const localCached = getClientCachedDrill(currentUser.id, prompt, formation, focusArea, pitchView, ecoMode);
         if (localCached) {
-          const newDrill: SoccerDrill = {
-            ...localCached,
-            id: `drill_local_${Date.now()}`,
-            ownerId: currentUser?.id || currentUser?.username,
-            createdByRole: currentUser?.role,
-            isCached: true,
-            cacheSource: 'client',
-            quotaSaved: true,
-          };
-
-          setDrills((prev) => [newDrill, ...prev]);
-          setActiveDrill(newDrill);
-          setCurrentPhaseIndex(0);
-          setAnimationFraction(0);
-          setIsPlaying(true);
-          setIsVoicePromptOpen(false);
-          setQuotaStats(getQuotaStats());
-          showToast(`⚡ Instant Local Cache Hit (0 API cost, $0 quota): "${newDrill.title}"`);
-          return;
+          const saved = await persistGeneratedDrill(localCached);
+          if (saved) {
+            activateNewDrill(saved);
+            setQuotaStats(getQuotaStats());
+            showToast(`Loaded from your recent drills (no AI cost): "${saved.title}"`);
+            return;
+          }
+          // Could not save: fall through to the server so the drill ends up in the playbook.
         }
       }
 
-      // Level 2: Server-Side Cache & Offline Tactical Engine Call
+      // Level 2: server (cache → eco engine → Gemini → offline fallback)
       const response = await fetch('/api/generate-drill', {
         method: 'POST',
         headers: {
@@ -687,7 +736,7 @@ export default function App() {
           prompt,
           currentFormation: formation,
           focusArea,
-          pitchView: activeDrill?.pitchView || 'FULL',
+          pitchView,
           forceRefresh,
           ecoMode,
         }),
@@ -696,79 +745,54 @@ export default function App() {
       if (response.status === 401) {
         setCurrentUser(null);
         setAuthToken(null);
-        showToast('Authentication session expired. Please sign in again.');
+        showToast('Your session expired. Please sign in again.');
         return;
       }
 
-      const data = await response.json();
-      if (data.success && data.drill) {
-        let persistedDrill: SoccerDrill = {
-          ...data.drill,
-          isCached: data.cached || data.drill.isCached || false,
-          cacheSource: data.drill.cacheSource || (data.cached ? 'server-memory' : data.isTacticalFallback ? 'coachtactics-offline' : 'gemini-fresh'),
-          quotaSaved: data.quotaSaved ?? true,
-        };
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success || !data.drill) {
+        showToast(data.error || 'Drill generation failed. Please try again.');
+        return;
+      }
 
-        // Persist to authoritative server repository
-        try {
-          const saveRes = await fetch('/api/drills', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-            },
-            credentials: 'include',
-            body: JSON.stringify(data.drill),
-          });
-          if (saveRes.ok) {
-            const saveData = await saveRes.json();
-            if (saveData.success && saveData.drill) {
-              persistedDrill = saveData.drill;
-            }
-          }
-        } catch (saveErr) {
-          console.error('Failed to persist drill to server repository:', saveErr);
-        }
+      const isFallback = Boolean(data.isTacticalFallback);
+      const saved = await persistGeneratedDrill(data.drill);
+      const drill: SoccerDrill = saved ?? {
+        ...data.drill,
+        isCached: data.cached || data.drill.isCached || false,
+        quotaSaved: data.quotaSaved ?? true,
+      };
 
-        // Cache newly generated drill in client storage for future instant 0ms hits
-        saveDrillToClientCache(
-          prompt,
-          persistedDrill,
-          formation,
-          focusArea,
-          activeDrill?.pitchView || 'FULL',
-          ecoMode
-        );
+      // Only cache real results locally. A fallback template must not hide Gemini once it recovers.
+      if (saved && !isFallback) {
+        saveDrillToClientCache(currentUser.id, prompt, saved, formation, focusArea, pitchView, ecoMode);
+      }
 
-        if (data.cached) {
-          incrementQuotaStat('serverHits');
-        } else if (data.isTacticalFallback || data.ecoMode) {
-          incrementQuotaStat('serverHits');
-        } else {
-          incrementQuotaStat('apiCalls');
-        }
-        setQuotaStats(getQuotaStats());
-
-        setDrills((prev) => [persistedDrill, ...prev.filter((d) => d.id !== persistedDrill.id)]);
-        setActiveDrill(persistedDrill);
-        setCurrentPhaseIndex(0);
-        setAnimationFraction(0);
-        setIsPlaying(true);
-        setIsVoicePromptOpen(false);
-
-        if (data.cached) {
-          showToast(`⚡ Tactical Cache Hit (0 API cost): "${persistedDrill.title}"`);
-        } else if (data.isTacticalFallback || data.ecoMode) {
-          showToast(`🌿 CoachTactics Tactical Engine (0 API quota used): "${persistedDrill.title}"`);
-        } else {
-          showToast(`✨ Generated with Gemini Flash-Lite: "${persistedDrill.title}"`);
-        }
+      if (data.cached || isFallback || data.ecoMode) {
+        incrementQuotaStat('serverHits');
       } else {
-        showToast(data.error || 'Drill generation error. Please try again.');
+        incrementQuotaStat('apiCalls');
+      }
+      setQuotaStats(getQuotaStats());
+      activateNewDrill(drill);
+
+      const unsavedNote = saved ? '' : ' (not saved to playbook)';
+      if (isFallback) {
+        showToast(
+          data.fallbackReason === 'NO_API_KEY'
+            ? `No Gemini key configured: built from the offline template instead${unsavedNote}`
+            : `Gemini is unavailable right now: built from the offline template instead${unsavedNote}`
+        );
+      } else if (data.ecoMode) {
+        showToast(`Built with the offline tactical engine (eco mode)${unsavedNote}: "${drill.title}"`);
+      } else if (data.cached) {
+        showToast(`Loaded from cache (no AI cost)${unsavedNote}: "${drill.title}"`);
+      } else {
+        showToast(`Generated with ${data.modelUsed || 'Gemini'}${unsavedNote}: "${drill.title}"`);
       }
     } catch (err: any) {
       console.error('Failed to generate drill:', err);
-      showToast('Network error generating drill.');
+      showToast('Network error while generating the drill.');
     } finally {
       setIsGenerating(false);
     }
@@ -826,13 +850,15 @@ export default function App() {
         return;
       }
 
-      const data = await response.json();
-      if (data.success && data.drill) {
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success && data.drill) {
         setActiveDrill(data.drill);
         setDrills((prev) => prev.map((d) => (d.id === data.drill.id ? data.drill : d)));
         setAnimationFraction(0);
         setIsPlaying(true);
-        showToast(`Tactical Adjustment Applied: ${changeType}`);
+        showToast(data.message || `Adjustment applied: ${changeType}`);
+      } else {
+        showToast(data.error || 'Could not apply that adjustment.');
       }
     } catch (err) {
       console.error('Failed fast change:', err);
@@ -956,6 +982,8 @@ export default function App() {
     }
     setCurrentUser(null);
     setAuthToken(null);
+    setUsers([]);
+    clearClientCache();
     try {
       localStorage.removeItem('coachtactics_current_user');
     } catch (err) {
@@ -1009,8 +1037,9 @@ export default function App() {
       setUsers((prev) => prev.map((u) => (u.id === id ? data.user : u)));
       if (currentUser && currentUser.id === id) {
         setCurrentUser(data.user);
+        if (data.token) setAuthToken(data.token);
       }
-      showToast('User profile updated');
+      showToast(data.sessionsRevoked && currentUser?.id !== id ? 'User updated. Their existing sessions were signed out.' : 'User profile updated');
     } catch (err) {
       console.error(err);
       showToast('Network error updating user');
@@ -1229,7 +1258,7 @@ export default function App() {
               id="header-btn-role-switcher"
               onClick={() => setIsRoleModalOpen(true)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#122235] hover:bg-[#1A314D] border border-[#203650] rounded-lg transition-colors"
-              title="Switch Role / Squad Persona"
+              title="Your account and role"
             >
               <div
                 className="w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] text-[#0A131F]"
@@ -1334,6 +1363,7 @@ export default function App() {
                 onEraseNear={handleEraseNear}
                 onLaserMoved={handleLaserMoved}
                 onPitchTapForNote={handlePitchTapForNote}
+                onInteractionStart={() => setIsPlaying(false)}
               />
 
               {/* Tactical Layers Stacking Panel */}
@@ -1524,11 +1554,7 @@ export default function App() {
       <RoleManagementDialog
         isOpen={isRoleModalOpen}
         currentUser={currentUser}
-        availableUsers={DEFAULT_USERS}
-        onSelectUser={(user) => {
-          setCurrentUser(user);
-          showToast(`Switched to: ${user.name} (${user.role})`);
-        }}
+        availableUsers={[currentUser]}
         onClose={() => setIsRoleModalOpen(false)}
       />
 

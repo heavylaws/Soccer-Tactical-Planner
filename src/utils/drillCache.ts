@@ -4,8 +4,15 @@ import {
   CACHE_VERSION,
 } from './cacheFingerprint';
 
-const CLIENT_CACHE_KEY = `coach_tactics_drill_cache_${CACHE_VERSION}`;
+// Keys are scoped per user so a shared device (e.g. a touchline tablet) never shows
+// one account's cached drills to another account.
+const CLIENT_CACHE_PREFIX = `coach_tactics_drill_cache_${CACHE_VERSION}`;
+const LEGACY_KEYS = ['coach_tactics_drill_cache_v1', `coach_tactics_drill_cache_${CACHE_VERSION}`];
 const QUOTA_STATS_KEY = 'coach_tactics_quota_stats_v1';
+
+function cacheKeyFor(userId: string): string {
+  return `${CLIENT_CACHE_PREFIX}:${userId}`;
+}
 
 interface StoredCacheItem {
   fingerprint: string;
@@ -37,14 +44,16 @@ export function getFingerprintForRequest(
  * Token overlap and fuzzy matching have been completely eliminated.
  */
 export function getClientCachedDrill(
+  userId: string,
   prompt: string,
   formation = '',
   focusArea = '',
   pitchView = 'FULL',
   ecoMode = false
 ): SoccerDrill | null {
+  if (!userId) return null;
   try {
-    const raw = localStorage.getItem(CLIENT_CACHE_KEY);
+    const raw = localStorage.getItem(cacheKeyFor(userId));
     if (!raw) return null;
 
     const cache: Record<string, StoredCacheItem> = JSON.parse(raw);
@@ -72,6 +81,7 @@ export function getClientCachedDrill(
  * Saves a validated newly-generated drill into client storage keyed by exact deterministic fingerprint.
  */
 export function saveDrillToClientCache(
+  userId: string,
   prompt: string,
   drill: SoccerDrill,
   formation = '',
@@ -79,8 +89,10 @@ export function saveDrillToClientCache(
   pitchView = 'FULL',
   ecoMode = false
 ): void {
+  if (!userId) return;
+  const key = cacheKeyFor(userId);
   try {
-    const raw = localStorage.getItem(CLIENT_CACHE_KEY);
+    const raw = localStorage.getItem(key);
     const cache: Record<string, StoredCacheItem> = raw ? JSON.parse(raw) : {};
 
     const fingerprint = getFingerprintForRequest(prompt, formation, focusArea, pitchView, ecoMode);
@@ -100,9 +112,9 @@ export function saveDrillToClientCache(
     if (entries.length > 100) {
       entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
       const pruned = Object.fromEntries(entries.slice(0, 100));
-      localStorage.setItem(CLIENT_CACHE_KEY, JSON.stringify(pruned));
+      localStorage.setItem(key, JSON.stringify(pruned));
     } else {
-      localStorage.setItem(CLIENT_CACHE_KEY, JSON.stringify(cache));
+      localStorage.setItem(key, JSON.stringify(cache));
     }
   } catch (e) {
     console.warn('Failed to save drill to client cache:', e);
@@ -148,11 +160,15 @@ export function incrementQuotaStat(stat: 'clientHits' | 'serverHits' | 'apiCalls
   }
 }
 
+/** Removes cached drills for every user on this device (called on logout). */
 export function clearClientCache(): void {
   try {
-    localStorage.removeItem(CLIENT_CACHE_KEY);
-    // Also clean up any legacy v1 cache if present
-    localStorage.removeItem('coach_tactics_drill_cache_v1');
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith(`${CLIENT_CACHE_PREFIX}:`) || LEGACY_KEYS.includes(k))) toRemove.push(k);
+    }
+    toRemove.forEach((k) => localStorage.removeItem(k));
   } catch {
     // ignore
   }

@@ -98,7 +98,7 @@ export interface SoccerDrill {
   version?: number;
   isSystem?: boolean;
   isCached?: boolean;
-  cacheSource?: 'client' | 'server-memory' | 'uefa-offline' | 'gemini-fresh' | 'coachtactics-offline';
+  cacheSource?: 'client' | 'server-memory' | 'gemini-fresh' | 'coachtactics-offline';
   quotaSaved?: boolean;
 }
 
