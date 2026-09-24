@@ -120,10 +120,10 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
               <span>Cached Drills</span>
             </span>
             <span className="text-2xl font-black text-white mt-1">
-              {serverStats.cachedDrillsCount ?? 8}
+              {serverStats.cachedDrillsCount ?? '—'}
             </span>
             <span className="text-[10px] text-gray-400 font-semibold mt-0.5">
-              Pre-warmed UEFA Playbook
+              Includes pre-seeded samples
             </span>
           </div>
 
@@ -149,7 +149,7 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
               {stats.apiCalls}
             </span>
             <span className="text-[10px] text-gray-400">
-              Gemini 3.1 Flash-Lite
+              Gemini (server-side)
             </span>
           </div>
         </div>
@@ -161,13 +161,13 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
             <span>How CoachTactics Preserves Quota:</span>
           </div>
           <p className="text-[11px] leading-relaxed text-gray-300">
-            • <strong>Deterministic Normalization:</strong> Queries like "overlapping wing cross" and "winger cross overlap" match the same canonical cached tactical plan.
+            • <strong>Exact-match cache:</strong> Repeating the same prompt, formation, focus area and pitch view (ignoring case, spacing and trailing punctuation) returns the cached drill with no new AI call.
           </p>
           <p className="text-[11px] leading-relaxed text-gray-300">
-            • <strong>UEFA Synthesizer:</strong> Eliminates service overload errors and rate limits by synthesizing tactical drills offline at $0 API cost.
+            • <strong>Offline engine:</strong> Eco mode, and any Gemini outage, uses the built-in template engine at no API cost. Results are labelled when this happens.
           </p>
           <p className="text-[11px] leading-relaxed text-gray-300">
-            • <strong>Gemini 3.1 Flash-Lite:</strong> Configured for minimal token consumption and maximum free quota allocation.
+            • <strong>Per-user limit:</strong> Live Gemini generation is limited per user; cache hits and eco mode do not count.
           </p>
         </div>
 
@@ -175,7 +175,7 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
         {clearedNotice && (
           <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-400 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4" />
-            <span>Cache reset and re-seeded with UEFA tactics!</span>
+            <span>Cache reset and re-seeded with the sample drills.</span>
           </div>
         )}
 

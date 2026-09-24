@@ -4,7 +4,28 @@ All notable changes to CoachTactics. Newest first.
 
 ## Unreleased
 
-_Nothing yet._
+### Build
+- **Cross-platform build.** `build`, `start` and `clean` used Unix-only `rm -rf` and
+  `NODE_ENV=production`, so they failed on Windows. `npm run build` now runs `scripts/build.mjs`
+  (removes `dist/`, Vite client build to `dist/client/`, esbuild server bundle to `dist/server.cjs`).
+  The bundle defines `process.env.NODE_ENV` as `"production"` and also sets it at startup, so
+  Express (external, not bundled) runs in production mode and `npm start` is plain
+  `node dist/server.cjs` on every platform.
+  _Files: `scripts/build.mjs` (new), `package.json`_
+- Removed the `@types/bcryptjs` stub (bcryptjs 3 ships its own types). Both lockfiles updated; the
+  lockfiles also now carry the real package name (`coachtactics`) instead of `react-example`.
+  _Files: `package.json`, `package-lock.json`, `bun.lock`_
+
+### AI generation UI
+- **Eco mode is now off by default** in the generator sheet: Gemini is used unless the coach
+  switches eco mode on. Server-side limits, caching and fallback labelling are unchanged.
+  The toggle now exposes `role="switch"` and `aria-checked`.
+  _File: `src/components/VoicePromptSheet.tsx`_
+- Removed hardcoded model names ("Gemini 3.1 Flash-Lite") from the UI; models come from
+  `GEMINI_MODELS` (AGENTS.md section 6). Removed "UEFA" wording (no affiliation exists) and an
+  inaccurate claim that differently worded prompts share a cache entry (matching is exact).
+  The cached-drills tile shows "—" instead of a made-up 8 while statistics load.
+  _Files: `src/components/VoicePromptSheet.tsx`, `src/components/QuotaStatsModal.tsx`, `src/App.tsx`_
 
 ## 2.1.0 — 2026-09-23 — Security hardening and reliability
 

@@ -53,7 +53,8 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
     return 'en-US';
   });
   const recognitionRef = useRef<any>(null);
-  const [ecoMode, setEcoMode] = useState(true);
+  // Live Gemini generation by default; eco mode (offline engine, no API cost) is opt-in.
+  const [ecoMode, setEcoMode] = useState(false);
   const [forceRefresh, setForceRefresh] = useState(false);
   const [quotaStats, setQuotaStats] = useState<QuotaStats>({
     clientHits: 0,
@@ -455,12 +456,12 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
               <Leaf className={`w-4 h-4 ${ecoMode ? 'text-emerald-400' : 'text-gray-500'}`} />
               <div>
                 <div className="text-xs font-semibold text-gray-200">
-                  {ecoMode ? 'Eco / Free Mode Active (100% Free)' : 'Live AI Generation (Gemini 3.1 Flash-Lite)'}
+                  {ecoMode ? 'Eco Mode (offline engine, no API cost)' : 'Live AI Generation (Gemini)'}
                 </div>
                 <div className="text-[10px] text-gray-400">
                   {ecoMode
-                    ? 'Uses Tactical Cache & UEFA Engine. 0 API calls, zero quota used.'
-                    : 'Hits Gemini 3.1 Flash-Lite for unique custom drill variations.'}
+                    ? 'Uses the tactical cache and offline template engine. No Gemini calls.'
+                    : 'Gemini drafts a custom drill. Falls back to the offline engine if unavailable.'}
                 </div>
               </div>
             </div>
@@ -468,6 +469,9 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
             <button
               id="voice-prompt-toggle-ecomode"
               type="button"
+              role="switch"
+              aria-checked={ecoMode}
+              aria-label="Eco mode"
               onClick={() => {
                 setEcoMode(!ecoMode);
                 if (!ecoMode) setForceRefresh(false);

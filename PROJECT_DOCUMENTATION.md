@@ -79,7 +79,7 @@ Size limits (`TACTICAL_LIMITS`): 12 phases, 30 players and 40 equipment items pe
 1. **Cache:** exact fingerprint match on prompt + formation + focus area + pitch view + mode.
    Sample prompts are pre-seeded with offline drills so demos are instant.
 2. **Eco mode:** if requested, the offline synthesizer builds the drill (no API cost).
-   Note: the generator sheet has eco mode switched **on** by default.
+   Note: the generator sheet has eco mode switched **off** by default (Gemini is used unless the coach switches it on).
 3. **Gemini:** models from `GEMINI_MODELS` are tried in order, 30 s timeout each, 8,192 output
    tokens, low thinking level. Output → `repairAiDrill` → `validateTacticalDrill`.
    Limited to 20 Gemini requests per user per 10 minutes.

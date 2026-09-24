@@ -1534,7 +1534,7 @@ export default function App() {
         }}
         onCacheCleared={() => {
           setQuotaStats(getQuotaStats());
-          showToast('Tactical Cache reset and re-seeded with UEFA tactics.');
+          showToast('Tactical cache reset and re-seeded with the sample drills.');
         }}
       />
 
