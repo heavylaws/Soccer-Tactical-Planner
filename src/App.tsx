@@ -244,7 +244,10 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isQuotaModalOpen, setIsQuotaModalOpen] = useState(false);
-  const [quotaStats, setQuotaStats] = useState(() => getQuotaStats());
+  const [quotaStats, setQuotaStats] = useState(() => getQuotaStats(null));
+  useEffect(() => {
+    setQuotaStats(getQuotaStats(currentUser?.id));
+  }, [currentUser?.id]);
 
   // Filter drills based on user role and ownership
   // A newly created/logged-in client starts with 0 trainings until they create them
@@ -716,7 +719,7 @@ export default function App() {
           const saved = await persistGeneratedDrill(localCached);
           if (saved) {
             activateNewDrill(saved);
-            setQuotaStats(getQuotaStats());
+            setQuotaStats(getQuotaStats(currentUser?.id));
             showToast(`Loaded from your recent drills (no AI cost): "${saved.title}"`);
             return;
           }
@@ -769,11 +772,11 @@ export default function App() {
       }
 
       if (data.cached || isFallback || data.ecoMode) {
-        incrementQuotaStat('serverHits');
+        incrementQuotaStat(currentUser.id, 'serverHits');
       } else {
-        incrementQuotaStat('apiCalls');
+        incrementQuotaStat(currentUser.id, 'apiCalls');
       }
-      setQuotaStats(getQuotaStats());
+      setQuotaStats(getQuotaStats(currentUser?.id));
       activateNewDrill(drill);
 
       const unsavedNote = saved ? '' : ' (not saved to playbook)';
@@ -984,6 +987,7 @@ export default function App() {
     setAuthToken(null);
     setUsers([]);
     clearClientCache();
+    setQuotaStats(getQuotaStats(null));
     try {
       localStorage.removeItem('coachtactics_current_user');
     } catch (err) {
@@ -1179,7 +1183,7 @@ export default function App() {
             <button
               id="header-btn-quota-stats"
               onClick={() => {
-                setQuotaStats(getQuotaStats());
+                setQuotaStats(getQuotaStats(currentUser?.id));
                 setIsQuotaModalOpen(true);
               }}
               className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5"
@@ -1528,13 +1532,20 @@ export default function App() {
       {/* Modals & Dialogs */}
       <QuotaStatsModal
         isOpen={isQuotaModalOpen}
+        userId={currentUser?.id}
+        authToken={authToken}
+        isSuperAdmin={currentUser?.role === 'SUPER_ADMIN'}
         onClose={() => {
           setIsQuotaModalOpen(false);
-          setQuotaStats(getQuotaStats());
+          setQuotaStats(getQuotaStats(currentUser?.id));
         }}
-        onCacheCleared={() => {
-          setQuotaStats(getQuotaStats());
-          showToast('Tactical cache reset and re-seeded with the sample drills.');
+        onCacheCleared={(serverCleared) => {
+          setQuotaStats(getQuotaStats(currentUser?.id));
+          showToast(
+            serverCleared
+              ? 'Tactical cache reset and re-seeded with the sample drills.'
+              : 'Cached drills in this browser were cleared.'
+          );
         }}
       />
 
@@ -1548,6 +1559,7 @@ export default function App() {
         isGenerating={isGenerating}
         userRole={currentUser.role}
         username={currentUser.username}
+        userId={currentUser.id}
         initialPrompt={initialVoicePrompt}
       />
 

@@ -4,6 +4,22 @@ All notable changes to CoachTactics. Newest first.
 
 ## Unreleased
 
+### Security and privacy
+- **`GET /api/cache-stats` hides deployment configuration from non-admins.** `geminiModels` and
+  `geminiKeyConfigured` are now returned to SUPER_ADMIN only (previously any signed-in role,
+  including PLAYER). Three tests added. _Files: `server.ts`, `tests/securityHardening.test.ts`_
+- **Quota counters are per user and cleared on logout** (AGENTS.md section 7). The key is now
+  `coach_tactics_quota_stats_v2:<userId>`; the old shared `coach_tactics_quota_stats_v1` key is
+  removed on logout. _Files: `src/utils/drillCache.ts`, `src/App.tsx`, `src/components/VoicePromptSheet.tsx`_
+
+### Fixes
+- **Cache statistics dialog works in the AI Studio preview.** It called `/api/cache-stats` and
+  `/api/clear-cache` without the bearer token, so inside the iframe (no cookie) both returned 401:
+  the statistics stayed empty and "Clear & Reseed" reported success even though nothing was reset.
+  Both calls now send the token. Only super admins get the server reset; other roles get
+  "Clear Browser Cache". A failed reset is shown as an error, not as success.
+  _Files: `src/components/QuotaStatsModal.tsx`, `src/App.tsx`_
+
 ### Build
 - **Cross-platform build.** `build`, `start` and `clean` used Unix-only `rm -rf` and
   `NODE_ENV=production`, so they failed on Windows. `npm run build` now runs `scripts/build.mjs`

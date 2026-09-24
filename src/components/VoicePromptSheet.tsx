@@ -28,6 +28,7 @@ interface VoicePromptSheetProps {
   isGenerating: boolean;
   userRole?: string;
   username?: string;
+  userId?: string;
   initialPrompt?: string;
 }
 
@@ -38,6 +39,7 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
   isGenerating,
   userRole,
   username,
+  userId,
   initialPrompt,
 }) => {
   const [prompt, setPrompt] = useState('');
@@ -68,9 +70,9 @@ export const VoicePromptSheet: React.FC<VoicePromptSheetProps> = ({
       setPrompt(initialPrompt);
     }
     if (isOpen) {
-      setQuotaStats(getQuotaStats());
+      setQuotaStats(getQuotaStats(userId));
     }
-  }, [initialPrompt, isOpen]);
+  }, [initialPrompt, isOpen, userId]);
 
   // Tactical knowledge suggestions library for live typing triggers
   const TACTICAL_KNOWLEDGE_SUGGESTIONS = [

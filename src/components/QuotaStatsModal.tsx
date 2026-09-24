@@ -15,13 +15,22 @@ import { getQuotaStats, clearClientCache, QuotaStats } from '../utils/drillCache
 interface QuotaStatsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCacheCleared?: () => void;
+  /** serverCleared is true only when the server confirmed the global cache reset. */
+  onCacheCleared?: (serverCleared: boolean) => void;
+  userId?: string;
+  /** Needed in the AI Studio iframe, where the session cookie is not sent. */
+  authToken?: string | null;
+  /** Only super admins may reset the shared server cache (enforced by the server). */
+  isSuperAdmin?: boolean;
 }
 
 export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
   isOpen,
   onClose,
   onCacheCleared,
+  userId,
+  authToken,
+  isSuperAdmin = false,
 }) => {
   const [stats, setStats] = useState<QuotaStats>({
     clientHits: 0,
@@ -34,31 +43,48 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
     hitRatePercent?: number;
   }>({});
   const [isClearing, setIsClearing] = useState(false);
-  const [clearedNotice, setClearedNotice] = useState(false);
+  const [clearedNotice, setClearedNotice] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
+
+  const authHeaders: Record<string, string> = authToken ? { Authorization: `Bearer ${authToken}` } : {};
 
   useEffect(() => {
-    if (isOpen) {
-      setStats(getQuotaStats());
-      fetch('/api/cache-stats')
-        .then((res) => res.json())
-        .then((data) => setServerStats(data))
-        .catch(() => {});
-    }
-  }, [isOpen]);
+    if (!isOpen) return;
+    setStats(getQuotaStats(userId));
+    setClearError(null);
+    let cancelled = false;
+    fetch('/api/cache-stats', { credentials: 'include', headers: authHeaders })
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((data) => {
+        if (!cancelled) setServerStats(data || {});
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, userId, authToken]);
 
   const handleClear = async () => {
     setIsClearing(true);
+    setClearError(null);
     clearClientCache();
-    try {
-      await fetch('/api/clear-cache', { method: 'POST', credentials: 'include' });
-    } catch {
-      // ignore
-    }
     setStats({ clientHits: 0, serverHits: 0, apiCalls: 0, totalSaved: 0 });
+
+    let serverCleared = false;
+    if (isSuperAdmin) {
+      try {
+        const res = await fetch('/api/clear-cache', { method: 'POST', credentials: 'include', headers: authHeaders });
+        serverCleared = res.ok;
+        if (!res.ok) setClearError('The server cache could not be reset. Browser cache was cleared.');
+      } catch {
+        setClearError('The server cache could not be reset. Browser cache was cleared.');
+      }
+    }
+
     setIsClearing(false);
-    setClearedNotice(true);
-    setTimeout(() => setClearedNotice(false), 2500);
-    if (onCacheCleared) onCacheCleared();
+    setClearedNotice(serverCleared ? 'Server cache reset and re-seeded with the sample drills.' : 'Cached drills in this browser were cleared.');
+    setTimeout(() => setClearedNotice(null), 2500);
+    if (onCacheCleared) onCacheCleared(serverCleared);
   };
 
   if (!isOpen) return null;
@@ -172,10 +198,15 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
         </div>
 
         {/* Clear Notice */}
-        {clearedNotice && (
+        {clearedNotice && !clearError && (
           <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-400 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4" />
-            <span>Cache reset and re-seeded with the sample drills.</span>
+            <span>{clearedNotice}</span>
+          </div>
+        )}
+        {clearError && (
+          <div className="p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-400" role="alert">
+            {clearError}
           </div>
         )}
 
@@ -189,7 +220,7 @@ export const QuotaStatsModal: React.FC<QuotaStatsModalProps> = ({
             className="px-3 py-1.5 bg-[#1C2C3E] hover:bg-red-500/20 text-gray-300 hover:text-red-400 border border-[#2A3E54] hover:border-red-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>Clear & Reseed Cache</span>
+            <span>{isSuperAdmin ? 'Clear & Reseed Cache' : 'Clear Browser Cache'}</span>
           </button>
 
           <button

@@ -74,7 +74,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     res.json({ status: 'ok', version: APP_VERSION });
   });
 
-  app.get('/api/cache-stats', requireAuth, (_req, res) => {
+  app.get('/api/cache-stats', requireAuth, (req: AuthenticatedRequest, res) => {
     const hitRate =
       cacheMetrics.totalRequests > 0 ? Math.round((cacheMetrics.cacheHits / cacheMetrics.totalRequests) * 100) : 100;
     res.json({
@@ -86,8 +86,13 @@ export async function createApp(options: CreateAppOptions = {}) {
       hitRatePercent: hitRate,
       cachedDrillsCount: drillCache.size,
       cacheVersion: CACHE_VERSION,
-      geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY || config.geminiApiKey),
-      geminiModels: config.geminiModels,
+      // Deployment configuration is visible to super admins only.
+      ...(req.user?.role === 'SUPER_ADMIN'
+        ? {
+            geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY || config.geminiApiKey),
+            geminiModels: config.geminiModels,
+          }
+        : {}),
     });
   });
 

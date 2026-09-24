@@ -136,6 +136,18 @@ async function main() {
 
     console.log('\n--- 7. Cache endpoints ---');
     assert((await api('GET', '/api/cache-stats')).status === 401, 'cache-stats requires login');
+    const coachStats = await api('GET', '/api/cache-stats', undefined, coachToken2);
+    assert(
+      coachStats.status === 200 && coachStats.json?.geminiModels === undefined && coachStats.json?.geminiKeyConfigured === undefined,
+      'cache-stats hides Gemini configuration from non-admins'
+    );
+    const playerStats = await api('GET', '/api/cache-stats', undefined, playerToken);
+    assert(playerStats.status === 200 && playerStats.json?.geminiModels === undefined, 'cache-stats hides Gemini configuration from players');
+    const adminStats = await api('GET', '/api/cache-stats', undefined, adminToken2);
+    assert(
+      adminStats.status === 200 && Array.isArray(adminStats.json?.geminiModels) && typeof adminStats.json?.geminiKeyConfigured === 'boolean',
+      'cache-stats shows Gemini configuration to super admins'
+    );
     assert((await api('POST', '/api/clear-cache', {}, coachToken2)).status === 403, 'Coach cannot clear global cache');
     assert((await api('POST', '/api/clear-cache', {}, adminToken2)).status === 200, 'Super admin can clear cache');
     const health = await api('GET', '/api/health');

@@ -8,7 +8,13 @@ import {
 // one account's cached drills to another account.
 const CLIENT_CACHE_PREFIX = `coach_tactics_drill_cache_${CACHE_VERSION}`;
 const LEGACY_KEYS = ['coach_tactics_drill_cache_v1', `coach_tactics_drill_cache_${CACHE_VERSION}`];
-const QUOTA_STATS_KEY = 'coach_tactics_quota_stats_v1';
+// Quota counters are per user too, and cleared on logout with the drill cache.
+const QUOTA_STATS_PREFIX = 'coach_tactics_quota_stats_v2';
+const LEGACY_QUOTA_KEYS = ['coach_tactics_quota_stats_v1'];
+
+function quotaKeyFor(userId: string): string {
+  return `${QUOTA_STATS_PREFIX}:${userId}`;
+}
 
 function cacheKeyFor(userId: string): string {
   return `${CLIENT_CACHE_PREFIX}:${userId}`;
@@ -61,7 +67,7 @@ export function getClientCachedDrill(
 
     const match = cache[fingerprint];
     if (match && match.drill && Array.isArray(match.drill.phases) && match.drill.phases.length > 0) {
-      incrementQuotaStat('clientHits');
+      incrementQuotaStat(userId, 'clientHits');
       return {
         ...match.drill,
         isCached: true,
@@ -128,9 +134,10 @@ export interface QuotaStats {
   totalSaved: number;
 }
 
-export function getQuotaStats(): QuotaStats {
+export function getQuotaStats(userId?: string | null): QuotaStats {
+  if (!userId) return { clientHits: 0, serverHits: 0, apiCalls: 0, totalSaved: 0 };
   try {
-    const raw = localStorage.getItem(QUOTA_STATS_KEY);
+    const raw = localStorage.getItem(quotaKeyFor(userId));
     if (!raw) {
       return { clientHits: 0, serverHits: 0, apiCalls: 0, totalSaved: 0 };
     }
@@ -149,24 +156,32 @@ export function getQuotaStats(): QuotaStats {
   }
 }
 
-export function incrementQuotaStat(stat: 'clientHits' | 'serverHits' | 'apiCalls'): void {
+export function incrementQuotaStat(userId: string | null | undefined, stat: 'clientHits' | 'serverHits' | 'apiCalls'): void {
+  if (!userId) return;
   try {
-    const stats = getQuotaStats();
+    const stats = getQuotaStats(userId);
     stats[stat] = (stats[stat] || 0) + 1;
     stats.totalSaved = stats.clientHits + stats.serverHits;
-    localStorage.setItem(QUOTA_STATS_KEY, JSON.stringify(stats));
+    localStorage.setItem(quotaKeyFor(userId), JSON.stringify(stats));
   } catch {
     // ignore
   }
 }
 
-/** Removes cached drills for every user on this device (called on logout). */
+/** Removes cached drills and quota counters for every user on this device (called on logout). */
 export function clearClientCache(): void {
   try {
     const toRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && (k.startsWith(`${CLIENT_CACHE_PREFIX}:`) || LEGACY_KEYS.includes(k))) toRemove.push(k);
+      if (
+        k &&
+        (k.startsWith(`${CLIENT_CACHE_PREFIX}:`) ||
+          k.startsWith(`${QUOTA_STATS_PREFIX}:`) ||
+          LEGACY_KEYS.includes(k) ||
+          LEGACY_QUOTA_KEYS.includes(k))
+      )
+        toRemove.push(k);
     }
     toRemove.forEach((k) => localStorage.removeItem(k));
   } catch {
